@@ -26,18 +26,37 @@ However, roboticists, university students, and hobbyists face three crippling bo
 
 **`swizzle-robotics` solves this with an edge-first inference runtime and unified model adapters.**
 
-```text
-Laptop Camera / Sim          Swizzle Edge Engine                      Model Foundation
-┌──────────────────┐         ┌───────────────────────────────┐        ┌─────────────────────────┐
-│ 224x224 RGB-D    │ ────▶   │ Swizzle-PatchCache            │ ────▶  │ NVIDIA Cosmos Predict   │
-│ Camera Feed      │         │ (Skip 92.8% static patches)   │        │ LeRobot SmolVLA (450M)  │
-└──────────────────┘         ├───────────────────────────────┤        │ NVIDIA Project GR00T    │
-                             │ Swizzle-SpecAct               │ ────▶  │ OpenVLA 7B              │
-                             │ (7-DoF Kinematic Speculation) │        │ Physical Intel. pi0     │
-┌──────────────────┐         ├───────────────────────────────┤        │ Meta V-JEPA 2 / DINO-WM │
-│ Robot Arm / Sim  │ ◀────   │ Swizzle-Teleop                │ ◀────  └─────────────────────────┘
-│ 80.5 Hz Actuator │         │ (50-80Hz Quintic Spline)      │
-└──────────────────┘         └───────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Input["Sensory Ingress"]
+        Cam["224x224 RGB-D Camera<br/>• RealSense / Webcam / Sim<br/>• 30-60 FPS Video Stream"]
+    end
+
+    subgraph EdgeEngine["Swizzle Robotics Edge Runtime"]
+        direction TB
+        PC["Swizzle-PatchCache<br/>• 14x14 ViT Patch Delta Gating<br/>• Skip 92.9% Static Patches<br/>• 3.85x Prefill Acceleration"]
+        SA["Swizzle-SpecAct<br/>• 2nd-Order Kinematic Extrapolator<br/>• 7-DoF Speculative Draft in < 40μs<br/>• 99.76% Draft Token Acceptance"]
+        TP["Swizzle-Teleop & MPC<br/>• C² Quintic Hermite Spline<br/>• Receding Horizon CEM Rollouts<br/>• < 1.2ms Motor Jitter"]
+        PC --> SA --> TP
+    end
+
+    subgraph FoundationModels["Unified Open-Source Model Suite"]
+        direction TB
+        M1["NVIDIA Cosmos Predict Mini<br/>(Continuous World Model Latents)"]
+        M2["LeRobot SmolVLA 450M<br/>(93.3 Hz Edge Control on Laptops)"]
+        M3["NVIDIA Project GR00T Manipulator<br/>(Humanoid & Dual-Arm Coordination)"]
+        M4["OpenVLA 7B<br/>(256-Bin Discretized Actuator Tokens)"]
+        M5["Physical Intelligence π₀-FAST<br/>(Flow-Matching Continuous Chunks)"]
+        M6["Meta V-JEPA 2 / DINO-WM<br/>(Action-Conditional Latent MPC)"]
+    end
+
+    subgraph Actuators["Hardware & Actuation"]
+        ARM["Robot Arm / Gripper<br/>• SO-100 / ALOHA / Franka<br/>• 80.5 Hz Real-Time Control"]
+    end
+
+    Cam --> EdgeEngine
+    EdgeEngine <--> FoundationModels
+    EdgeEngine --> ARM
 ```
 
 ---
