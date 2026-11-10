@@ -1,59 +1,72 @@
+from __future__ import annotations
 import time
 from dataclasses import dataclass
-from typing import Optional, Tuple, Callable
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 
+from .types import PatchCacheDecision, SpecActTelemetry
+from .core.camera import LiveCamera
+from .core.patch_cache import extract_patch_intensities_from_frame
+from .models.base import BaseVLAPolicy
+from .models import get_policy
+
 @dataclass
-class ServoingConfig:
-    target_hz: float = 80.5
-    grid_size: int = 14
-    patch_size: int = 16
-    smoothing_factor: float = 0.85
+class ServoingTelemetry:
+    step: int
+    dt_ms: float
+    effective_hz: float
+    action_7dof: List[float]
+    substeps_count: int
+    patch_hit_ratio: float
+    spec_act_rate: float
+    prefill_speedup: float
 
 class VisualServoingLoop:
     """
-    80.5 Hz sub-millisecond visual servoing control loop.
-    Extracts 14x14 ViT patch luminance representations directly from frame buffers
-    and computes closed-loop end-effector actuation deltas.
+    80.5 Hz Real-Time Visual Servoing Runtime.
+    Drives continuous camera ingestion, spatio-temporal patch caching,
+    model inference, and quintic spline trajectory smoothing.
     """
-    def __init__(self, config: Optional[ServoingConfig] = None):
-        self.config = config or ServoingConfig()
-        self.prev_delta = np.zeros(6, dtype=np.float32)
-        self.frame_count = 0
-        self.interval_sec = 1.0 / self.config.target_hz
 
-    def extract_patch_luminance(self, frame_bgr: np.ndarray) -> np.ndarray:
-        """Extracts 14x14 luminance grid from incoming 224x224 frame."""
-        if frame_bgr.ndim == 3:
-            # Grayscale luminance: 0.299 R + 0.587 G + 0.114 B
-            gray = 0.299 * frame_bgr[:, :, 2] + 0.587 * frame_bgr[:, :, 1] + 0.114 * frame_bgr[:, :, 0]
-        else:
-            gray = frame_bgr
+    def __init__(
+        self,
+        policy: Optional[BaseVLAPolicy] = None,
+        camera: Optional[LiveCamera] = None,
+        target_hz: float = 80.5,
+    ):
+        self.policy = policy or get_policy("lerobot/smolvla-450m")
+        self.camera = camera or LiveCamera()
+        self.target_hz = target_hz
+        self.interval = 1.0 / target_hz
+        self.step_idx = 0
+        self._latencies: List[float] = []
 
-        # Downsample to 14x14 grid
-        h, w = gray.shape
-        gh = h // self.config.grid_size
-        gw = w // self.config.grid_size
-        cropped = gray[:gh * self.config.grid_size, :gw * self.config.grid_size]
-        grid = cropped.reshape(self.config.grid_size, gh, self.config.grid_size, gw).mean(axis=(1, 3))
-        return grid.astype(np.float32) / 255.0
-
-    def step(self, current_frame: np.ndarray, goal_features: np.ndarray) -> Tuple[np.ndarray, float]:
+    def step(self, prompt: str = "Pick up target object") -> ServoingTelemetry:
         t0 = time.perf_counter()
-        curr_feat = self.extract_patch_luminance(current_frame)
-        error = goal_features - curr_feat
+        ret, frame = self.camera.read()
 
-        # Proportional visual servoing error projection to 6-DoF end-effector delta [dx, dy, dz, droll, dpitch, dyaw]
-        dx = float(np.mean(error[:, :7]) - np.mean(error[:, 7:]))
-        dy = float(np.mean(error[:7, :]) - np.mean(error[7:, :]))
-        dz = float(np.mean(error))
-        d_rot = np.array([dy * 0.5, -dx * 0.5, 0.0], dtype=np.float32)
+        action, substeps, pc_decision, spec_act = self.policy.step(frame, prompt)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        self._latencies.append(elapsed_ms)
+        if len(self._latencies) > 100:
+            self._latencies.pop(0)
 
-        raw_delta = np.array([dx, dy, dz, d_rot[0], d_rot[1], d_rot[2]], dtype=np.float32)
-        # Exponential smoothing to prevent motor oscillation
-        smoothed_delta = self.config.smoothing_factor * self.prev_delta + (1.0 - self.config.smoothing_factor) * raw_delta
-        self.prev_delta = smoothed_delta
-        self.frame_count += 1
+        self.step_idx += 1
+        fps = 1000.0 / max(1.0, elapsed_ms)
 
-        compute_latency_ms = (time.perf_counter() - t0) * 1000.0
-        return smoothed_delta, compute_latency_ms
+        return ServoingTelemetry(
+            step=self.step_idx,
+            dt_ms=round(elapsed_ms, 2),
+            effective_hz=round(fps, 1),
+            action_7dof=action,
+            substeps_count=len(substeps),
+            patch_hit_ratio=pc_decision.patch_hit_ratio,
+            spec_act_rate=spec_act.acceptance_rate,
+            prefill_speedup=pc_decision.prefill_speedup,
+        )
+
+    def run_n_steps(self, n: int = 50, prompt: str = "Pick up target object") -> List[ServoingTelemetry]:
+        results = []
+        for _ in range(n):
+            results.append(self.step(prompt))
+        return results
