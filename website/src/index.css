@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    background-color: #050608;
+    color: #F4F6FA;
+  }
+}
+
+.tech-grid {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.hairline {
+  border-color: rgba(255, 255, 255, 0.085);
+}
+
+.glow-lime {
+  box-shadow: 0 0 36px -10px rgba(201, 255, 59, 0.25);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 36px -10px rgba(56, 189, 248, 0.22);
+}

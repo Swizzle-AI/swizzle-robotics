@@ -148,14 +148,34 @@ Open [`playground/index.html`](playground/index.html) directly in any browser:
 
 ---
 
+## 🌐 Real-Life Robot Arena Studio (Web Console + FastAPI/WS Backend)
+
+Connect physical robots (`LeRobot SO-ARM100`, `Franka FR3`, `UR5e`, `Unitree G1`, or `MuJoCo HIL`), hot-tune CBF safety barriers & RTC parameters live at runtime, test synthetic disturbances with Hard E-Stop latching, and export `.mcap` + `LeRobot v2.1` + `swizzle_deploy_profile.json`:
+
+```bash
+# 1. Start the Real-Life Arena backend (FastAPI + /ws/studio + /ws/robot/{id})
+swizzle-robotics arena-server --port 8787
+
+# 2. Connect your physical robot over WebSocket SDK (or run website/ dev server):
+python examples/connect_real_robot.py --robot-id franka-cell-01 --url ws://127.0.0.1:8787
+
+# 3. Build or run the enterprise React + Tailwind web console (website/):
+cd website && npm install && npm run build
+```
+
+When `website/dist` is built, `swizzle-robotics arena-server` serves the Studio UI automatically at `http://127.0.0.1:8787`. You can also deploy `website/` standalone on Vercel (`Root Directory: website`, `Output Directory: dist`).
+
+---
+
 ## 📊 Empirical Benchmarks & Verified Test Suite
 
-### 1. Unit Test & Safety Verification (`30 / 30 Passed`)
+### 1. Unit Test & Safety Verification (`35 / 35` Pytest Passed)
 
-Executed cleanly via `python -m unittest discover -s tests -p "test_*.py"` (`0.734s`):
+Executed via `python -m pytest -q` (`35 passed`):
 
 | Test Suite | Coverage Scope | Result |
 | :--- | :--- | :--- |
+| `tests/test_arena_backend.py` | FastAPI + WebSocket Real-Life Arena (`/ws/studio`, `/ws/robot/{id}`), live parameter hot-tuning, E-Stop latching & `.mcap` export | **3 / 3 Passed** |
 | `tests/test_safety_cbf.py` | `Swizzle-CBF` workspace geofence, spherical obstacle repulsion, slew-rate jerk limit & watchdog decay | **4 / 4 Passed** |
 | `tests/test_rtc_world_batched.py` | `Swizzle-RTC` soft-mask prefix freezing, chunk continuity & vectorized `plan_cem_batched` | **3 / 3 Passed** |
 | `tests/test_flight_recorder.py` | Foxglove binary `.mcap` framing, `LeRobot v2.1` export, DAgger intervention flags & tamper-proof `PhysicalReceipt` | **1 / 1 Passed** |

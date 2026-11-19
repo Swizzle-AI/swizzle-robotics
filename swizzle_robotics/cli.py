@@ -35,6 +35,11 @@ def main():
     arena_parser.add_argument("--steps", type=int, default=40, help="Max steps per episode")
     arena_parser.add_argument("--record-dir", type=str, default="", help="Optional output folder for .mcap and LeRobot v2.1 episodes")
 
+    # Command: arena-server
+    arena_srv_parser = subparsers.add_parser("arena-server", help="Launch Real-Life Robot Arena FastAPI + WebSocket tuning backend")
+    arena_srv_parser.add_argument("--port", type=int, default=8787, help="Port to listen on (default: 8787)")
+    arena_srv_parser.add_argument("--host", type=str, default="0.0.0.0", help="Host interface to bind")
+
     args = parser.parse_args()
 
     if args.command == "detect" or not args.command:
@@ -108,6 +113,10 @@ def main():
                 ctrl.recorder.export_mcap(out_root / f"ep_{ep:06d}.mcap")
                 ctrl.recorder.export_lerobot_v2(out_root / "lerobot_dataset", episode_index=ep)
         arena.close()
+
+    elif args.command == "arena-server":
+        from .arena_backend import run_arena_server
+        run_arena_server(port=args.port, host=args.host)
 
 if __name__ == "__main__":
     main()
