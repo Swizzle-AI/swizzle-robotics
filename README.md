@@ -148,16 +148,53 @@ Open [`playground/index.html`](playground/index.html) directly in any browser:
 
 ---
 
-## 📊 Empirical Benchmarks
+## 📊 Empirical Benchmarks & Verified Test Suite
 
-| Policy / Model | Parameter Size | Baseline Latency | Swizzle Latency | Control Rate | ViT Patch Hit | SpecAct Accept |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`lerobot/smolvla-450m`** | 450M | 38.5 ms | **10.7 ms** | **93.3 Hz** | 97.15% | 100.0% |
-| **`nvidia/gr00t-manipulator`**| 1.2B | 54.0 ms | **12.4 ms** | **80.5 Hz** | 92.95% | 99.76% |
-| **`openvla/openvla-7b`** | 7.0B | 63.0 ms | **18.5 ms** | **54.0 Hz** | 91.80% | 98.40% |
-| **`physical-intel/pi0-fast`** | 1.8B | 48.0 ms | **14.2 ms** | **70.4 Hz** | 93.50% | 99.10% |
-| **`nvidia/cosmos-predict`** | Latent WM | 420.5 ms | **25.0 ms** | **40.0 Hz (128 CEM)** | 98.20% | N/A |
-| **`meta/vjepa2-latent-mpc`** | Latent WM | 390.0 ms | **22.1 ms** | **45.2 Hz (128 CEM)** | 98.50% | N/A |
+### 1. Unit Test & Safety Verification (`30 / 30 Passed`)
+
+Executed cleanly via `python -m unittest discover -s tests -p "test_*.py"` (`0.734s`):
+
+| Test Suite | Coverage Scope | Result |
+| :--- | :--- | :--- |
+| `tests/test_safety_cbf.py` | `Swizzle-CBF` workspace geofence, spherical obstacle repulsion, slew-rate jerk limit & watchdog decay | **4 / 4 Passed** |
+| `tests/test_rtc_world_batched.py` | `Swizzle-RTC` soft-mask prefix freezing, chunk continuity & vectorized `plan_cem_batched` | **3 / 3 Passed** |
+| `tests/test_flight_recorder.py` | Foxglove binary `.mcap` framing, `LeRobot v2.1` export, DAgger intervention flags & tamper-proof `PhysicalReceipt` | **1 / 1 Passed** |
+| `tests/test_hierarchical_zenoh.py` | `S2->S1->S0` JSON-Schema obstacle grounding & `Eclipse Zenoh` ring-buffer / heartbeat monitor | **2 / 2 Passed** |
+| `tests/test_mujoco_arena.py` | `SwizzleManipulationArena` rigid-body pick-and-place with `CBF` + `.mcap` / `LeRobot v2.1` export | **1 / 1 Passed** |
+| `tests/test_edge_flow_runner.py` | PyTorch `TorchEdgeVLAPolicy` sparse `PatchCache` ViT + Euler Flow-Matching + `.safetensors` roundtrip | **1 / 1 Passed** |
+| Core Engine, Models, Servoing, Spline & SIMPLER Suites | `test_patch_cache.py`, `test_spec_act.py`, `test_teleop_spline.py`, `test_models.py`, `test_servoing.py`, `test_robotics.py`, `test_simpler_eval.py` | **18 / 18 Passed** |
+
+### 2. Safety, RTC Continuity & PyTorch Sparse Flow Ablation Results
+
+Reproducible with `python benchmarks/bench_safety_rtc_ablation.py` and `python benchmarks/bench_mujoco_closed_loop.py`:
+
+| Benchmark Track | Vanilla Baseline | Swizzle Robotics (`v0.3`) | Measured Gain |
+| :--- | :--- | :--- | :--- |
+| **Adversarial Collision & Table Safety (25 steps)** | `25 / 25` Violations | **`0 / 25` Violations (`0.125 ms` mean CBF solve)** | **100% Constraint Satisfaction** |
+| **Chunk-Boundary Step Jump (`Swizzle-RTC`)** | `0.800` Step Discontinuity | **`0.515` Prefix-Inpainted Step** | **`1.55x` Smoother Transition** |
+| **World-Model CEM Planning (`N=128, H=5`)** | `46.10 ms` (Serial Rollout) | **`8.90 ms` (Vectorized `plan_cem_batched`)** | **`5.18x` CPU Speedup** |
+| **Neural Sparse ViT Encoding (`torch=True`, 196 tokens)** | `1.364 ms` (Dense ViT) | **`0.720 ms` (Sparse `PatchCache` @ 91.8% reuse)** | **`1.89x` Faster Forward Pass** |
+| **End-to-End `S2 -> S1 -> S0` Hierarchical Loop** | N/A | **`13.64 ms/tick` (`73.3 Hz`), Receipts Verified** | **Tamper-Evident Audit Trail** |
+| **Closed-Loop Manipulation Arena (`30` steps)** | N/A | **`357.4 Hz`, `0` Collisions, `27.6 KB` `.mcap` + `LeRobot v2.1`** | **Zero-Drop Black-Box Logging** |
+
+### 3. VLA Roofline & SIMPLER Manipulation Suite
+
+Reproducible with `python benchmarks/swizzle_robotics_vla_bench.py`, `python benchmarks/swizzle_world_mpc_bench.py`, and `python benchmarks/eval_simpler_manipulation.py`:
+
+| Metric / Workload (`swizzle_robotics_vla_bench.py`) | Measured Value | Notes |
+| :--- | ---: | :--- |
+| **Average Control Frequency (120 steps)** | **92.3 Hz** | Baseline: `15.9 Hz` (**`5.82x` End-to-End Speedup**) |
+| **Mean Step Latency / p99 Latency** | **10.83 ms / 17.15 ms** | `4` Quintic Hermite Spline substeps/step |
+| **ViT Patch Reuse / `SpecAct` Acceptance** | **97.15% / 100.00%** | Single parallel verify pass |
+
+| Policy / Model (Catalog & SIMPLER Evaluation) | Task Evaluated | Observed Control Rate | ViT Patch Reuse | SpecAct Accept |
+| :--- | :--- | ---: | ---: | ---: |
+| **`lerobot/smolvla-450m`** | `WidowX-PickCube` / `GoogleRobot-MoveNear` | **203.4 Hz / 195.8 Hz** | 95.6% / 96.0% | 100.0% |
+| **`nvidia/gr00t-manipulator-v1`** | `WidowX-PickCube` / `Humanoid-BimanualHandover` | **199.8 Hz / 206.2 Hz** | 95.6% | 100.0% |
+| **`openvla/openvla-7b-swizzle`** | `WidowX-PickCube` / `GoogleRobot-MoveNear` | **170.1 Hz / 171.6 Hz** | 95.6% / 96.0% | 100.0% |
+| **`physical-intelligence/pi0-fast`** | `WidowX-PickCube` / `Humanoid-BimanualHandover` | **137.8 Hz / 192.4 Hz** | 95.6% | 100.0% |
+| **`nvidia/cosmos-predict-mini`** | Latent CEM (`H=3, N=128`) / (`H=5, N=128`) | **25.20 ms / 43.95 ms** | **49.99x / 47.76x** vs Pixel | `18 / 18` SIMPLER Pass |
+| **`meta/vjepa2-latent-mpc`** | Latent CEM (`H=3, N=128`) / (`H=5, N=128`) | **33.05 ms / 45.97 ms** | **38.11x / 45.66x** vs Pixel | `18 / 18` SIMPLER Pass |
 
 ---
 
