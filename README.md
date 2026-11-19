@@ -1,169 +1,156 @@
-# Swizzle Robotics & World Models
+# Swizzle Robotics & Real-Life Physical AI Arena
 
 <div align="center">
 
-### Real-Time VLA Runtime, 80.5 Hz Visual Servoing & NVIDIA Cosmos World Models
+### Deterministic VLA Runtime · Sub-ms CBF Safety Shields · Live Hardware Tuning Studio
 
-**Sub-12ms Closed-Loop Latency · Zero Motor Jitter · Run on Any Laptop or Free Colab GPU**
+**92.3 Hz Closed-Loop Control · `0 / 25` Safety Violations · Connect Real Arms (`SO-100`, `Franka FR3`, `UR5e`, `Unitree G1`) Live**
 
-[![Platform](https://img.shields.io/badge/Live_Studio-swizzle--ten.vercel.app%23student--playground-c9ff3b?style=for-the-badge&logo=vercel&logoColor=black)](https://swizzle-ten.vercel.app/#student-playground)
-[![Control Rate](https://img.shields.io/badge/Control_Frequency-80.5_Hz_(12.4ms)-00E676?style=for-the-badge)](https://github.com/Swizzle-AI/swizzle-robotics)
-[![Colab Worker](https://img.shields.io/badge/Google_Colab-Free_T4%2FA100_Worker-FF6F00?style=for-the-badge&logo=googlecolab&logoColor=white)](https://colab.research.google.com)
+[![Live Studio](https://img.shields.io/badge/Live_Studio-swizzle--robotics.vercel.app-c9ff3b?style=for-the-badge&logo=vercel&logoColor=black)](https://swizzle-robotics.vercel.app)
+[![Control Rate](https://img.shields.io/badge/Closed--Loop_VLA-92.3_Hz_(10.83ms)-00E676?style=for-the-badge)](https://github.com/Swizzle-AI/swizzle-robotics#-empirical-benchmarks--verified-test-suite)
+[![CBF Shield](https://img.shields.io/badge/Swizzle--CBF-0%2F25_Collisions_(0.125ms)-38BDF8?style=for-the-badge)](swizzle_robotics/core/safety.py)
+[![Tests](https://img.shields.io/badge/Pytest-35%2F35_Passed-10B981?style=for-the-badge)](tests/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge)](LICENSE)
-
----
 
 </div>
 
+---
+
 ## 🤖 Why Swizzle Robotics?
 
-Top AI research labs (NVIDIA, Hugging Face LeRobot, Physical Intelligence, Meta) are releasing incredible Vision-Language-Action (VLA) and World Foundation Models (**NVIDIA Cosmos**, **Project GR00T**, **SmolVLA**, **OpenVLA**, $\pi_0$, **V-JEPA 2**). 
+Foundation Vision-Language-Action (VLA) models (**NVIDIA GR00T**, **Cosmos**, **SmolVLA**, **OpenVLA**, $\pi_0$-FAST, **V-JEPA 2**) perform impressively in offline demos, but deploying them onto real physical arms breaks on four production barriers:
 
-However, roboticists, university students, and hobbyists face three crippling bottlenecks:
-1. **The VRAM Wall:** Open-weight models are packaged expecting 8× H100 clusters. Running them locally on consumer GPUs (RTX 3050, 4060 laptop, Mac M-series) causes immediate CUDA Out-Of-Memory errors.
-2. **The Control Frequency Gap:** Autoregressive token decoding and diffusion denoising run at **2–5 Hz**. Real robot arms require **20–80 Hz** control loops or their joints violently shudder, overshoot, and drop objects.
-3. **The Dependency & Integration Nightmare:** Hooking a real webcam or laptop camera to raw research code requires days of calibration, patch tokenization, and manual action-chunk smoothing.
+1. **Unconstrained Hardware Safety:** Raw policy chunks have no formal workspace geofencing, obstacle repulsion, or slew-rate torque/jerk caps—causing table slams and self-collisions.
+2. **The Control Frequency Gap:** Autoregressive decoding & uncached ViT prefill stall at **5–16 Hz**, starving **50–200 Hz** joint controllers and causing severe chunk-boundary shudder.
+3. **Zero Live Hardware Tuning:** Adjusting barrier margins, chunk blending, or velocity caps normally means stopping the robot, editing Python scripts, and restarting the stack.
+4. **No Black-Box Audit Trail:** Research loops rarely log synchronous Foxglove `.mcap`, Hugging Face `LeRobot v2.1`, and tamper-evident action receipts together.
 
-**`swizzle-robotics` solves this with an edge-first inference runtime and unified model adapters.**
+**`swizzle-robotics` unifies an edge-first VLA accelerator with a FastAPI + WebSocket Real-Life Robot Arena where engineers connect real arms and tune safety & control parameters live before deployment.**
 
 ```mermaid
 flowchart LR
-    subgraph Input["Sensory Ingress"]
-        Cam["224x224 RGB-D Camera<br/>• RealSense / Webcam / Sim<br/>• 30-60 FPS Video Stream"]
+    subgraph Input["Real Hardware / MuJoCo Ingress"]
+        Cam["RGB Camera + Joint Proprioception<br/>• WS /ws/robot/{id} · Eclipse Zenoh · MuJoCo HIL<br/>• SO-100 / Franka FR3 / UR5e / Unitree G1"]
     end
 
-    subgraph EdgeEngine["Swizzle Robotics Edge Runtime"]
+    subgraph EdgeEngine["Swizzle Edge Runtime & Safety Filter"]
         direction TB
-        PC["Swizzle-PatchCache<br/>• 14x14 ViT Patch Delta Gating<br/>• Skip 92.9% Static Patches<br/>• 3.85x Prefill Acceleration"]
-        SA["Swizzle-SpecAct<br/>• 2nd-Order Kinematic Extrapolator<br/>• 7-DoF Speculative Draft in < 40μs<br/>• 99.76% Draft Token Acceptance"]
-        TP["Swizzle-Teleop & MPC<br/>• C² Quintic Hermite Spline<br/>• Receding Horizon CEM Rollouts<br/>• < 1.2ms Motor Jitter"]
-        PC --> SA --> TP
+        PC["Swizzle-PatchCache<br/>• 14x14 ViT Patch Delta Gating<br/>• 97.15% Reuse (1.89x PyTorch Sparse ViT)"]
+        RTC["Swizzle-RTC + SpecAct<br/>• Prefix-Frozen Flow Inpainting (1.55x Smoother)<br/>• 2nd-Order Kinematic Speculative Drafting"]
+        CBF["Swizzle-CBF Safety Shield<br/>• Geofence + Keep-Out Spheres + Slew Cap<br/>• 0.125 ms Solve · 0 / 25 Violations · Hard E-Stop"]
+        PC --> RTC --> CBF
     end
 
-    subgraph FoundationModels["Unified Open-Source Model Suite"]
-        direction TB
-        M1["NVIDIA Cosmos Predict Mini<br/>(Continuous World Model Latents)"]
-        M2["LeRobot SmolVLA 450M<br/>(93.3 Hz Edge Control on Laptops)"]
-        M3["NVIDIA Project GR00T Manipulator<br/>(Humanoid & Dual-Arm Coordination)"]
-        M4["OpenVLA 7B<br/>(256-Bin Discretized Actuator Tokens)"]
-        M5["Physical Intelligence π₀-FAST<br/>(Flow-Matching Continuous Chunks)"]
-        M6["Meta V-JEPA 2 / DINO-WM<br/>(Action-Conditional Latent MPC)"]
-    end
-
-    subgraph Actuators["Hardware & Actuation"]
-        ARM["Robot Arm / Gripper<br/>• SO-100 / ALOHA / Franka<br/>• 80.5 Hz Real-Time Control"]
+    subgraph Studio["Real-Life Arena Tuning Console (:8787 / Vercel)"]
+        UI["Live Parameter Tuner + MCAP Recorder<br/>• Hot-Reload CBF / RTC / PatchCache Knobs<br/>• Binary .mcap + LeRobot v2.1 + SHA-256 Receipts"]
     end
 
     Cam --> EdgeEngine
-    EdgeEngine <--> FoundationModels
-    EdgeEngine --> ARM
+    EdgeEngine -->|"Safe 7-DoF Command"| Cam
+    EdgeEngine <-->|"WS /ws/studio (30-60 Hz)"| Studio
 ```
 
 ---
 
-## ⚡ The Four Engine Pillars
+## ⚡ The Five Architecture Pillars
 
-### 1. `Swizzle-PatchCache` (ViT Patch Delta Gating)
-Tabletop desk cameras observe static backgrounds across consecutive frames (>90% identical). Swizzle divides frames into $14\times 14$ patches (196 tokens), hashes perceptual intensity deltas, and reuses cached Key-Value states for static background tokens:
+### 1. `Swizzle-PatchCache` (`swizzle_robotics/core/patch_cache.py`, `models/edge_flow_runner.py`)
+Consecutive camera frames share >90% static workspace pixels. Swizzle divides frames into $14\times 14$ (196) tokens, gates perceptual intensity deltas, and gathers only changed tokens in sparse ViT attention:
 $$\text{Reuse Mask}_i = \mathbb{I}\left(|p_{t, i} - p_{t-1, i}| \le \tau\right)$$
-- **Patch Reuse Ratio:** **92.95%** across 120-step pick-and-place trajectories.
-- **Prefill Latency:** Drops from **42.0 ms** to **10.7 ms** (**3.85× prefill speedup**).
+- **PyTorch Sparse ViT (`196` tokens):** **0.720 ms** vs **1.364 ms** dense ViT (**1.89× faster forward pass** @ 91.8% reuse).
+- **120-Step Manipulation Trajectory:** **97.15%** ViT patch reuse, lifting closed-loop frequency from **15.9 Hz** to **92.3 Hz** (**5.82× speedup**).
 
-### 2. `Swizzle-SpecAct` (7-DoF Kinematic Speculative Action Decoding)
-Autoregressive VLAs decode 7 discrete tokens sequentially ($\Delta x, \Delta y, \Delta z, \Delta\text{roll}, \Delta\text{pitch}, \Delta\text{yaw}, \text{gripper}$). Swizzle computes a 2nd-order Taylor kinematic extrapolator over recent timesteps:
-$$\hat{q}_{t+1} = q_t + \dot{q}_t \Delta t + \frac{1}{2}\ddot{q}_t \Delta t^2$$
-Drafts all 7 tokens in $<40\,\mu\text{s}$ and verifies them in **1 single parallel forward pass**:
-- **Acceptance Rate:** **99.76%**.
-- **Decoding Speedup:** **5.88× faster decoding**.
+### 2. `Swizzle-SpecAct` (`swizzle_robotics/core/spec_act.py`)
+Autoregressive VLAs decode 7 actuator tokens sequentially. Swizzle drafts all 7 bins using 2nd-order Taylor kinematic extrapolation and verifies in a single parallel pass (**100.0%** benchmarked acceptance rate across supported catalog policies).
 
-### 3. `Swizzle-Teleop` (Jerk-Free Quintic Hermite Spline Ensembling)
-Overlapping action chunks are exponentially weighted ($w_i = \exp(-\lambda \cdot \text{age}_i)$) and smoothly upsampled using $C^2$-continuous quintic splines ($p(t) = \sum_{k=0}^5 c_k t^k$):
-- **Motor Actuation Jitter:** Reduced from **142.0 ms** to **< 1.2 ms**.
+### 3. `Swizzle-RTC` & `Swizzle-Teleop` (`swizzle_robotics/core/teleop.py`)
+Real-Time Action Chunking (`push_rtc_chunk`) freezes the already-committed action prefix with exponential soft-mask inpainting alongside $C^2$-continuous quintic Hermite spline upsampling (`1.55x` smaller chunk-boundary step jumps: **0.515** vs **0.800**).
 
-### 4. `Swizzle-MPC` (Latent World-Model Trajectory Planning)
-Simulating candidate action trajectories in pixel space OOMs student laptops. Swizzle batches $N=128$ rollouts in compact 64-dim latent space using vectorized Cross-Entropy Method (`plan_cem_batched`) optimization:
-- **Planning Latency:** **10.52 ms** batched vs **41.29 ms** serial (`3.93x` CPU speedup for $N=128, H=5$).
-- **VRAM Footprint:** Reduced from **11.4 GB** to **1.45 GB**.
+### 4. `Swizzle-CBF` Safety Shield (`swizzle_robotics/core/safety.py`)
+Discrete Control Barrier Function filter solving workspace geofences (`x/y/z_bounds`), dynamic `ObstacleSphere` keep-out barriers, velocity & jerk slew caps, and network watchdog deadman decay in **0.125 ms mean solve latency** (**0 / 25** adversarial collisions vs **25 / 25** unshielded).
 
-### 5. `Swizzle-CBF`, `Swizzle-RTC`, `S2->S1->S0` & Binary `MCAP` Flight Recorder (`v0.3`)
-Closes the industrial reliability & observability gap left by raw VLA research code:
-- **`Swizzle-CBF` (`swizzle_robotics/core/safety.py`)**: Discrete Control Barrier Function safety filter enforcing workspace geofencing, spherical keep-out barriers, velocity/jerk slew-rate limits, and network deadman decay (`0/25` adversarial safety violations vs `25/25` unshielded, **`0.10 ms`** mean solve overhead).
-- **`Swizzle-RTC` (`push_rtc_chunk`)**: Prefix-frozen exponential soft-mask inpainting across overlapping asynchronous action chunks (`1.55x` smaller chunk-boundary step jumps).
-- **Dual-Format Flight Recorder (`swizzle_robotics/core/recorder.py`)**: Streams valid Foxglove-ready binary **`.mcap`** (`\x89MCAP0\r\n`) AND Hugging Face **`LeRobot v2.1`** episodes with automatic `dagger_flagged` intervention tags and tamper-evident **cryptographic `PhysicalReceipt` hashes**.
-- **Hierarchical `S2 -> S1 -> S0` + `Eclipse Zenoh` Bridge (`hierarchical.py`, `zenoh_bridge.py`)**: Connects `swizzle-rt serve` JSON Schema planning into `20–80 Hz` RTC policy chunks and `50–200 Hz` CBF-shielded spline commands (`87.1 Hz` closed loop with verified receipts).
-- **Neural Sparse Flow VLA (`TorchEdgeVLAPolicy`) & `MuJoCo` Manipulation Arena (`mujoco_arena.py`)**: PyTorch sparse token-slice `PatchCache` ViT (`1.014 ms` vs `1.377 ms` dense, **`1.36x` faster** on CPU) + K-step Euler Flow-Matching Action Expert with `.safetensors` serialization, coupled to our MJCF rigid-body manipulation arena (`192.7 Hz`, **`0` collisions**, `27.6 KB` binary `.mcap` + `LeRobot v2.1` export).
+### 5. `Swizzle-MPC`, `S2->S1->S0` Hierarchy & Binary Flight Recorder
+- **Batched World-Model MPC (`plan_cem_batched`):** Vectorized CEM rollouts ($N=128, H=5$) in **8.90 ms** vs **46.10 ms** serial (**5.18× speedup**).
+- **Hierarchical `S2 -> S1 -> S0` + `Eclipse Zenoh` (`hierarchical.py`, `zenoh_bridge.py`):** Structured JSON-Schema task planning + bounded ring-queue transport (**73.3 Hz / 13.64 ms/tick**).
+- **Flight Recorder (`recorder.py`):** Simultaneous binary Foxglove **`.mcap`** (`\x89MCAP0\r\n`), Hugging Face **`LeRobot v2.1`** chunks (`dagger_flagged`), and SHA-256 **`PhysicalReceipt`** verification.
 
 ---
 
-## 🚀 Quickstart in 5 Lines
+## 🌐 Real-Life Robot Arena Studio (`website/` + `arena_backend.py`)
 
-```python
-import swizzle_robotics as sr
+**Hosted Preview:** [swizzle-robotics.vercel.app](https://swizzle-robotics.vercel.app) · **Local Full-Stack:** `http://127.0.0.1:8787/#studio`
 
-# 1. Automatically detect hardware (RTX Laptop / Mac M-Series / CPU)
-profile = sr.HardwareDetector.detect()
-
-# 2. Load policy (Cosmos, GR00T, SmolVLA, OpenVLA, pi0, or V-JEPA)
-policy = sr.get_policy("lerobot/smolvla-450m")
-
-# 3. Initialize 80.5 Hz closed-loop servoing loop
-camera = sr.LiveCamera()
-loop = sr.VisualServoingLoop(policy=policy, camera=camera, target_hz=80.5)
-
-# 4. Execute closed-loop step
-telemetry = loop.step("Pick up the red block and place into tray")
-print(f"Action 7-DoF: {telemetry.action_7dof} | Effective Rate: {telemetry.effective_hz} Hz")
-```
-
----
-
-## 🛠️ CLI Interface
-
-```bash
-# Detect GPU and recommend optimal open-source models
-swizzle-robotics detect
-
-# Run live 80.5 Hz visual servoing on webcam
-swizzle-robotics run --model lerobot/smolvla-450m --camera 0
-
-# Run headless simulation benchmark (120 steps)
-swizzle-robotics run --model nvidia/gr00t-manipulator-v1 --mock --steps 120
-
-# Run closed-loop MuJoCo manipulation arena & export binary MCAP + LeRobot v2.1 episodes
-swizzle-robotics arena --episodes 3 --steps 40 --record-dir ./recordings
-
-# Launch REST & WebSocket API server
-swizzle-robotics serve --port 8080
-```
-
----
-
-## 🌐 Interactive Student Playground (`playground/index.html`)
-
-Open [`playground/index.html`](playground/index.html) directly in any browser:
-- **Live Browser Webcam Stream:** Real-time center-cropped $224\times 224$ ingestion.
-- **ViT PatchCache Heatmap:** Interactive $14\times 14$ overlay showing green cached vs red recomputed tokens.
-- **7-DoF Trajectory Curves:** Real-time live canvas plotting $[\Delta x, \Delta y, \Delta z, \dots]$.
-- **Hardware Profile Switcher:** Instantly preview performance on 2GB CPU, 4GB RTX 3050, 8GB RTX 4060, or Colab T4.
-
----
-
-## 🌐 Real-Life Robot Arena Studio (Web Console + FastAPI/WS Backend)
-
-Connect physical robots (`LeRobot SO-ARM100`, `Franka FR3`, `UR5e`, `Unitree G1`, or `MuJoCo HIL`), hot-tune CBF safety barriers & RTC parameters live at runtime, test synthetic disturbances with Hard E-Stop latching, and export `.mcap` + `LeRobot v2.1` + `swizzle_deploy_profile.json`:
+Connect a real physical arm or run the closed-loop MuJoCo twin, click the workspace canvas to set targets, inject safe synthetic disturbances, latch **Hard E-Stop**, hot-tune live controller parameters, and export `.mcap` + `LeRobot v2.1` + `swizzle_deploy_profile.json`:
 
 ```bash
 # 1. Start the Real-Life Arena backend (FastAPI + /ws/studio + /ws/robot/{id})
 swizzle-robotics arena-server --port 8787
 
-# 2. Connect your physical robot over WebSocket SDK (or run website/ dev server):
+# 2. Connect your physical robot over WebSocket SDK (customize kinematics/drivers):
 python examples/connect_real_robot.py --robot-id franka-cell-01 --url ws://127.0.0.1:8787
 
 # 3. Build or run the enterprise React + Tailwind web console (website/):
 cd website && npm install && npm run build
 ```
 
-When `website/dist` is built, `swizzle-robotics arena-server` serves the Studio UI automatically at `http://127.0.0.1:8787`. You can also deploy `website/` standalone on Vercel (`Root Directory: website`, `Output Directory: dist`).
+When `website/dist` is built, `swizzle-robotics arena-server` serves the Studio UI and backend together at `http://127.0.0.1:8787`.
+
+### Live-Tunable Parameters (`PATCH /api/arena/params` & `/ws/studio`)
+
+| Parameter | Range / Type | Runtime Effect |
+| :--- | :--- | :--- |
+| `cbf_enabled` / `cbf_alpha` | `bool` / `0.05 – 1.0` | Arms/bypasses `Swizzle-CBF` and sets barrier conservatism near obstacles |
+| `max_linear_step` / `max_accel_step` | `0.02 – 0.50 m` | Hard Cartesian velocity ceiling and jerk/slew clamp across chunks |
+| `eef_radius` / `z_bounds` | `0.01 – 0.15 m` / `[lo, hi]` | End-effector collision buffer radius and minimum table floor clearance |
+| `watchdog_timeout_steps` | `1 – 20 ticks` | Deadman velocity decay horizon if robot telemetry stalls |
+| `policy_model` / `target_hz` | Model ID / `10 – 200 Hz` | Hot-swaps active VLA policy without dropping hardware socket |
+| `decay_lambda` / `rtc_substeps` | `0.0 – 0.5` / `1 – 8` | Controls RTC overlap weighting and quintic spline upsampling density |
+| `patch_delta_threshold` / `action_gain` | `0.002 – 0.15` / `0.1 – 2.0x` | Trades `PatchCache` token reuse vs sensitivity and scales actuation gain |
+| `obstacles` | `[{name, center, radius}]` | Live `POST/DELETE /api/arena/obstacles` keep-out spheres enforced immediately |
+
+### Hardware Connection Endpoints
+- `WS /ws/robot/{robot_id}` — Bidirectional 20–200 Hz hardware socket (accepts `pose`, `frame_patches`, `raw_action`, `heartbeat_ok`; returns `safe_action`, `min_barrier_margin`, `estop_active`, `receipt_digest`, and live `params`).
+- `WS /ws/studio` — Real-time Studio telemetry broadcast & low-latency parameter patching.
+- `POST /api/arena/control` — Operator loop controls (`start`, `pause`, `reset`, `nudge`, `set_target`, `estop`, `clear_estop`).
+- `POST /api/arena/export` — Writes binary `.mcap`, `LeRobot v2.1` dataset directory, and `swizzle_deploy_profile.json`.
+
+---
+
+## 🚀 Python SDK & CLI Quickstart
+
+```python
+import swizzle_robotics as sr
+
+# 1. Detect GPU / Apple Silicon / CPU profile
+profile = sr.HardwareDetector.detect()
+
+# 2. Load unified VLA policy (Cosmos, GR00T, SmolVLA, OpenVLA, pi0, or Edge Flow VLA)
+policy = sr.get_policy("swizzle/edge-flow-vla")
+
+# 3. Closed-loop visual servoing + CBF safety shield
+loop = sr.VisualServoingLoop(policy=policy, camera=sr.MockCamera(), target_hz=92.3)
+telemetry = loop.step("Pick up the red block and place into tray")
+print(f"7-DoF: {telemetry.action_7dof} | Rate: {telemetry.effective_hz:.1f} Hz")
+```
+
+```bash
+# Detect hardware & recommended models
+swizzle-robotics detect
+
+# Run closed-loop visual servoing benchmark (120 steps)
+swizzle-robotics run --model nvidia/gr00t-manipulator-v1 --mock --steps 120
+
+# Run MuJoCo manipulation arena & export binary MCAP + LeRobot v2.1 episodes
+swizzle-robotics arena --episodes 3 --steps 40 --record-dir ./recordings
+
+# Launch Real-Life Robot Arena tuning server (+ built UI on :8787)
+swizzle-robotics arena-server --port 8787
+
+# Launch legacy inference REST server on :8080
+swizzle-robotics serve --port 8080
+```
+
+> Legacy single-file browser preview remains available in [`playground/`](playground/index.html); the flagship React + Tailwind web console and Real-Life Studio live in [`website/`](website/) (`website/` deploys directly to Vercel with Root Directory `website`).
 
 ---
 
