@@ -20,6 +20,7 @@ from .core.spec_act import KinematicSpecActPredictor
 from .core.teleop import TemporalActionEnsembler, QuinticSplineInterpolator
 from .core.zenoh_bridge import ZenohBridgeConfig, ZenohEnvelope, ZenohRoboticsBridge
 from .core.camera import LiveCamera, MockCamera
+from .envs import ArenaObservation, ArenaTaskConfig, SwizzleManipulationArena
 from .models.base import BaseVLAPolicy, BaseWorldModel
 from .models.cosmos_wm import CosmosWorldModel
 from .models.gr00t_policy import Gr00tPolicy
@@ -58,6 +59,9 @@ __all__ = [
     "ZenohBridgeConfig",
     "ZenohEnvelope",
     "ZenohRoboticsBridge",
+    "ArenaObservation",
+    "ArenaTaskConfig",
+    "SwizzleManipulationArena",
     "KinematicSpecActPredictor",
     "TemporalActionEnsembler",
     "QuinticSplineInterpolator",
