@@ -10,9 +10,11 @@ from .hardware import HardwareDetector
 from .models import get_policy, get_world_model, MODEL_REGISTRY
 from .core.camera import MockCamera
 from .core.patch_cache import extract_patch_intensities_from_frame
+from .core.recorder import EmbodiedFlightRecorder, PhysicalReceipt
 from .core.safety import ControlBarrierShield
 
 _GLOBAL_SAFETY_SHIELD = ControlBarrierShield()
+_GLOBAL_FLIGHT_RECORDER = EmbodiedFlightRecorder()
 
 class RoboticsAPIHandler(BaseHTTPRequestHandler):
     """Zero-dependency HTTP Handler for Swizzle Robotics VLA and World Model Serving."""
@@ -123,6 +125,10 @@ class RoboticsAPIHandler(BaseHTTPRequestHandler):
             pose = payload.get("pose", [0.0, 0.0, 0.25, 0.0, 0.0, 0.0])
             heartbeat_ok = bool(payload.get("heartbeat_ok", True))
             safety = _GLOBAL_SAFETY_SHIELD.project(act, pose, heartbeat_ok=heartbeat_ok)
+            trace_id = self.headers.get("traceparent", "local")
+            receipt = _GLOBAL_FLIGHT_RECORDER.record_step(
+                frame_data, pose, safety, prompt=prompt, trace_id=trace_id
+            )
             self._send_json(200, {
                 "model": model_name,
                 "action_7dof": safety.safe_action,
@@ -147,7 +153,22 @@ class RoboticsAPIHandler(BaseHTTPRequestHandler):
                     "solver_latency_ms": safety.solver_latency_ms,
                     "watchdog_active": safety.watchdog_active,
                 },
+                "receipt": {
+                    "episode_id": receipt.episode_id,
+                    "step_index": receipt.step_index,
+                    "observation_digest": receipt.observation_digest,
+                    "receipt_digest": receipt.receipt_digest,
+                    "dagger_flagged": _GLOBAL_FLIGHT_RECORDER.dagger_flagged,
+                },
             })
+
+        elif self.path == "/v1/robotics/receipt/verify":
+            try:
+                rec = PhysicalReceipt(**payload)
+                valid = rec.verify()
+                self._send_json(200, {"valid": valid, "receipt_digest": rec.receipt_digest})
+            except Exception as exc:
+                self._send_json(400, {"valid": False, "error": str(exc)})
 
         elif self.path == "/v1/robotics/safety":
             raw_act = payload.get("action", [0.0] * 7)

@@ -13,6 +13,7 @@ from .types import (
 )
 from .hardware import HardwareDetector
 from .core.patch_cache import PatchCacheFilter, extract_patch_intensities_from_frame
+from .core.recorder import EmbodiedFlightRecorder, McapBinaryWriter, PhysicalReceipt, hash_observation
 from .core.safety import ControlBarrierShield, ObstacleSphere, SafetyConfig, SafetyTelemetry
 from .core.spec_act import KinematicSpecActPredictor
 from .core.teleop import TemporalActionEnsembler, QuinticSplineInterpolator
@@ -41,6 +42,10 @@ __all__ = [
     "HardwareDetector",
     "PatchCacheFilter",
     "extract_patch_intensities_from_frame",
+    "EmbodiedFlightRecorder",
+    "McapBinaryWriter",
+    "PhysicalReceipt",
+    "hash_observation",
     "ControlBarrierShield",
     "ObstacleSphere",
     "SafetyConfig",
