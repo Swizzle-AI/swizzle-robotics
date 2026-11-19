@@ -13,6 +13,7 @@ from .types import (
 )
 from .hardware import HardwareDetector
 from .core.patch_cache import PatchCacheFilter, extract_patch_intensities_from_frame
+from .core.safety import ControlBarrierShield, ObstacleSphere, SafetyConfig, SafetyTelemetry
 from .core.spec_act import KinematicSpecActPredictor
 from .core.teleop import TemporalActionEnsembler, QuinticSplineInterpolator
 from .core.camera import LiveCamera, MockCamera
@@ -40,6 +41,10 @@ __all__ = [
     "HardwareDetector",
     "PatchCacheFilter",
     "extract_patch_intensities_from_frame",
+    "ControlBarrierShield",
+    "ObstacleSphere",
+    "SafetyConfig",
+    "SafetyTelemetry",
     "KinematicSpecActPredictor",
     "TemporalActionEnsembler",
     "QuinticSplineInterpolator",

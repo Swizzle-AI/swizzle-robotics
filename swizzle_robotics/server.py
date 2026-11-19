@@ -10,6 +10,9 @@ from .hardware import HardwareDetector
 from .models import get_policy, get_world_model, MODEL_REGISTRY
 from .core.camera import MockCamera
 from .core.patch_cache import extract_patch_intensities_from_frame
+from .core.safety import ControlBarrierShield
+
+_GLOBAL_SAFETY_SHIELD = ControlBarrierShield()
 
 class RoboticsAPIHandler(BaseHTTPRequestHandler):
     """Zero-dependency HTTP Handler for Swizzle Robotics VLA and World Model Serving."""
@@ -117,9 +120,13 @@ class RoboticsAPIHandler(BaseHTTPRequestHandler):
 
             policy = get_policy(model_name)
             act, substeps, pc_decision, spec_act = policy.step(frame_data, prompt)
+            pose = payload.get("pose", [0.0, 0.0, 0.25, 0.0, 0.0, 0.0])
+            heartbeat_ok = bool(payload.get("heartbeat_ok", True))
+            safety = _GLOBAL_SAFETY_SHIELD.project(act, pose, heartbeat_ok=heartbeat_ok)
             self._send_json(200, {
                 "model": model_name,
-                "action_7dof": act,
+                "action_7dof": safety.safe_action,
+                "raw_action_7dof": safety.raw_action,
                 "substeps_count": len(substeps),
                 "patch_cache": {
                     "reused_patches": pc_decision.reused_patches,
@@ -131,7 +138,31 @@ class RoboticsAPIHandler(BaseHTTPRequestHandler):
                 "spec_act": {
                     "acceptance_rate": spec_act.acceptance_rate,
                     "speedup": spec_act.decoding_speedup
-                }
+                },
+                "cbf_safety": {
+                    "intervened": safety.cbf_intervened,
+                    "min_barrier_margin": safety.min_barrier_margin,
+                    "clamped_axes": safety.clamped_axes,
+                    "reasons": safety.intervention_reasons,
+                    "solver_latency_ms": safety.solver_latency_ms,
+                    "watchdog_active": safety.watchdog_active,
+                },
+            })
+
+        elif self.path == "/v1/robotics/safety":
+            raw_act = payload.get("action", [0.0] * 7)
+            pose = payload.get("pose", [0.0, 0.0, 0.25, 0.0, 0.0, 0.0])
+            heartbeat_ok = bool(payload.get("heartbeat_ok", True))
+            safety = _GLOBAL_SAFETY_SHIELD.project(raw_act, pose, heartbeat_ok=heartbeat_ok)
+            self._send_json(200, {
+                "safe_action": safety.safe_action,
+                "raw_action": safety.raw_action,
+                "cbf_intervened": safety.cbf_intervened,
+                "min_barrier_margin": safety.min_barrier_margin,
+                "clamped_axes": safety.clamped_axes,
+                "intervention_reasons": safety.intervention_reasons,
+                "solver_latency_ms": safety.solver_latency_ms,
+                "watchdog_active": safety.watchdog_active,
             })
 
         elif self.path == "/v1/world/plan":
