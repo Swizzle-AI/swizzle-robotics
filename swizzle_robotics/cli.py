@@ -39,6 +39,7 @@ def main():
     arena_srv_parser = subparsers.add_parser("arena-server", help="Launch Real-Life Robot Arena FastAPI + WebSocket tuning backend")
     arena_srv_parser.add_argument("--port", type=int, default=8787, help="Port to listen on (default: 8787)")
     arena_srv_parser.add_argument("--host", type=str, default="0.0.0.0", help="Host interface to bind")
+    arena_srv_parser.add_argument("--tunnel", action="store_true", help="Launch cloudflared HTTPS/WSS tunnel for hosted UI access")
 
     args = parser.parse_args()
 
@@ -116,7 +117,7 @@ def main():
 
     elif args.command == "arena-server":
         from .arena_backend import run_arena_server
-        run_arena_server(port=args.port, host=args.host)
+        run_arena_server(port=args.port, host=args.host, tunnel=args.tunnel)
 
 if __name__ == "__main__":
     main()

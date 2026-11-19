@@ -4,7 +4,9 @@ import {
   AlertOctagon,
   Check,
   Copy,
+  Cpu,
   Download,
+  Eye,
   Pause,
   Play,
   Plus,
@@ -14,6 +16,7 @@ import {
   ShieldCheck,
   Sliders,
   Trash2,
+  Wrench,
   Zap,
 } from 'lucide-react';
 
@@ -174,6 +177,13 @@ export default function RealRobotStudio() {
   ]);
   const [exportBanner, setExportBanner] = useState(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
+  const [payloadMassKg, setPayloadMassKg] = useState(0.0);
+  const [checkpointRepo, setCheckpointRepo] = useState('swizzle/edge-flow-vla');
+  const [quantizeInt8, setQuantizeInt8] = useState(false);
+  const [checkpointStatus, setCheckpointStatus] = useState(null);
+  const [nativeRuntime, setNativeRuntime] = useState({ backend: 'numpy-vectorized' });
+  const [replayFrames, setReplayFrames] = useState([]);
+  const [replayIndex, setReplayIndex] = useState(0);
 
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
@@ -217,6 +227,8 @@ export default function RealRobotStudio() {
               if (s.params) setParams(s.params);
               if (s.robots) setRobots(s.robots);
               if (s.active_robot_id) setActiveRobotId(s.active_robot_id);
+              if (s.native_runtime) setNativeRuntime(s.native_runtime);
+              if (s.checkpoint_status) setCheckpointStatus(s.checkpoint_status);
               setEstopActive(Boolean(s.estop_active));
               setRunning(Boolean(s.running));
               if (s.events) setEvents(s.events);
@@ -676,6 +688,106 @@ export default function RealRobotStudio() {
     setTimeout(() => setCopiedCmd(false), 1800);
   };
 
+  const handleCalibrate = async (action, extra = {}) => {
+    if (backendStatus === 'connected') {
+      const res = await fetch(`${apiBase}/api/arena/calibrate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, robot_id: activeRobotId, ...extra }),
+      });
+      if (res.ok) {
+        const drv = await res.json();
+        setEvents((prev) => [
+          {
+            ts: Date.now() / 1000,
+            step: telemetry.step_index,
+            kind: 'CALIBRATE',
+            message: `${action} ok on ${activeRobotId} (packets=${drv.packets_sent})`,
+          },
+          ...prev.slice(0, 14),
+        ]);
+        return;
+      }
+    }
+    setEvents((prev) => [
+      {
+        ts: Date.now() / 1000,
+        step: telemetry.step_index,
+        kind: 'CALIBRATE',
+        message: `[Preview] ${action} recorded for ${activeRobotId}`,
+      },
+      ...prev.slice(0, 14),
+    ]);
+  };
+
+  const handleLoadCheckpoint = async (e) => {
+    e.preventDefault();
+    if (backendStatus === 'connected') {
+      const res = await fetch(`${apiBase}/api/arena/checkpoint`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repo_or_path: checkpointRepo.trim(),
+          quantize_int8: quantizeInt8,
+          local_files_only: true,
+        }),
+      });
+      if (res.ok) {
+        const st = await res.json();
+        setCheckpointStatus(st);
+        setParams((p) => ({ ...p, policy_model: st.source }));
+      }
+    } else {
+      setCheckpointStatus({
+        source: checkpointRepo.trim(),
+        quantized_int8: quantizeInt8,
+        sparse_vit_hooked: true,
+        notes: 'Preview mode: start arena-server to bind PyTorch SafeTensors/HF weights.',
+      });
+    }
+  };
+
+  const handleFetchReplay = async () => {
+    if (backendStatus === 'connected') {
+      const res = await fetch(`${apiBase}/api/arena/episodes/replay?limit=240`);
+      if (res.ok) {
+        const data = await res.json();
+        setReplayFrames(data.frames || []);
+        setReplayIndex(Math.max(0, (data.frames?.length || 1) - 1));
+        return;
+      }
+    }
+    // Synthesize replay history from recent oscilloscope points in offline mode
+    const synthetic = [
+      {
+        step_index: telemetry.step_index,
+        pose: telemetry.pose,
+        min_barrier_margin: telemetry.min_barrier_margin,
+        cbf_intervened: telemetry.cbf_intervened,
+        safe_action: telemetry.safe_action,
+        receipt_digest: telemetry.receipt_digest,
+      },
+    ];
+    setReplayFrames(synthetic);
+    setReplayIndex(0);
+  };
+
+  const handleDownloadMcap = () => {
+    if (backendStatus === 'connected') {
+      window.open(`${apiBase}/api/arena/mcap/download`, '_blank');
+    } else {
+      setEvents((prev) => [
+        {
+          ts: Date.now() / 1000,
+          step: telemetry.step_index,
+          kind: 'MCAP',
+          message: 'Start `swizzle-robotics arena-server` to stream binary \\x89MCAP0 download.',
+        },
+        ...prev.slice(0, 14),
+      ]);
+    }
+  };
+
   // Oscilloscope SVG path
   const marginPath = useMemo(() => {
     const pts = marginHistoryRef.current;
@@ -1028,7 +1140,7 @@ export default function RealRobotStudio() {
                   Live CBF Safety Margin Oscilloscope (0.0m Breach Line)
                 </span>
                 <span className="font-mono text-[10px] text-slate-500">
-                  {params.policy_model} · {telemetry.effective_hz} Hz
+                  {params.policy_model} · {telemetry.effective_hz} Hz · {nativeRuntime.backend}
                 </span>
               </div>
               <svg viewBox="0 0 280 56" className="w-full h-14 overflow-visible">
@@ -1036,6 +1148,72 @@ export default function RealRobotStudio() {
                 <line x1="0" y1="39.4" x2="280" y2="39.4" stroke="rgba(239,68,68,0.45)" strokeDasharray="3 3" strokeWidth="1" />
                 {marginPath && <path d={marginPath} fill="none" stroke="#C9FF3B" strokeWidth="1.8" />}
               </svg>
+            </div>
+
+            {/* 14x14 Camera PatchCache Heatmap + 7-DoF Joint Encoders */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="rounded-lg border border-white/[0.08] bg-obsidian/80 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                    <Eye className="w-3.5 h-3.5 text-cyanbrand" />
+                    14x14 ViT PatchCache Feed
+                  </span>
+                  <span className="font-mono text-[10px] text-emerald-400">
+                    {(Number(telemetry.patch_hit_ratio ?? 0.94) * 100).toFixed(1)}% Cached
+                  </span>
+                </div>
+                <div className="grid grid-cols-14 gap-[1.5px] bg-black/50 p-1 rounded border border-white/[0.06]" style={{ gridTemplateColumns: 'repeat(14, minmax(0, 1fr))' }}>
+                  {Array.from({ length: 196 }).map((_, idx) => {
+                    const row = Math.floor(idx / 14);
+                    const col = idx % 14;
+                    const reused = telemetry.patch_reuse_mask
+                      ? telemetry.patch_reuse_mask[idx] === 1
+                      : Math.abs(col - Math.round((telemetry.pose?.[0] ?? 0) * 10 + 7)) > 1 ||
+                        Math.abs(row - Math.round(7 - (telemetry.pose?.[1] ?? 0) * 10)) > 1;
+                    const intensity = telemetry.patch_intensities ? telemetry.patch_intensities[idx] : 0.45;
+                    return (
+                      <div
+                        key={idx}
+                        className="aspect-square rounded-[1px]"
+                        style={{
+                          backgroundColor: reused
+                            ? `rgba(16, 185, 129, ${0.18 + intensity * 0.25})`
+                            : '#C9FF3B',
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-white/[0.08] bg-obsidian/80 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                    <Cpu className="w-3.5 h-3.5 text-limebrand" />
+                    Joint Encoders (J1..J7 rad)
+                  </span>
+                  <span className="font-mono text-[10px] text-slate-500">
+                    {telemetry.packets_sent ?? 0} pkts
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {Array.from({ length: 7 }).map((_, jIdx) => {
+                    const rawJoint = telemetry.joint_positions
+                      ? telemetry.joint_positions[jIdx] ?? 0
+                      : (telemetry.pose?.[jIdx % 3] ?? 0) * (jIdx % 2 === 0 ? 1.8 : -1.5);
+                    const pct = Math.max(4, Math.min(98, ((rawJoint + 2.8) / 5.6) * 100));
+                    return (
+                      <div key={jIdx} className="flex items-center gap-2 font-mono text-[10px]">
+                        <span className="w-6 text-slate-400">{jIdx === 6 ? 'GRP' : `J${jIdx + 1}`}</span>
+                        <div className="flex-1 h-1.5 rounded bg-white/10 overflow-hidden">
+                          <div className="h-full bg-cyanbrand rounded" style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className="w-11 text-right text-slate-300">{Number(rawJoint).toFixed(2)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1047,11 +1225,12 @@ export default function RealRobotStudio() {
                 <Sliders className="w-3.5 h-3.5 text-limebrand" />
                 <span>LIVE PARAMETER TUNER</span>
               </div>
-              <div className="flex items-center gap-1 bg-obsidian p-1 rounded-lg border border-white/[0.08]">
+              <div className="flex flex-wrap items-center gap-1 bg-obsidian p-1 rounded-lg border border-white/[0.08]">
                 {[
-                  { id: 'safety', label: 'CBF Safety' },
-                  { id: 'rtc', label: 'RTC & Vision' },
-                  { id: 'obstacles', label: 'Zones & Log' },
+                  { id: 'safety', label: 'CBF' },
+                  { id: 'rtc', label: 'RTC' },
+                  { id: 'calibrate', label: 'Calibrate' },
+                  { id: 'obstacles', label: 'Zones' },
                 ].map((tab) => (
                   <button
                     key={tab.id}
@@ -1217,6 +1396,137 @@ export default function RealRobotStudio() {
                     onChange={(e) => patchParams({ instruction: e.target.value })}
                     className="w-full px-2.5 py-1.5 rounded bg-panel border border-white/[0.12] font-mono text-[11px] text-white"
                   />
+                </div>
+              </div>
+            )}
+
+            {tuneTab === 'calibrate' && (
+              <div className="space-y-3">
+                {/* Joint Calibration & Hardware Bus */}
+                <div className="rounded-lg border border-white/[0.08] bg-obsidian/70 p-3 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-limebrand">
+                      <Wrench className="w-3.5 h-3.5" />
+                      Hardware Bus &amp; Zero Calibration
+                    </span>
+                    <span className="font-mono text-[10px] text-slate-400">
+                      Runtime: {nativeRuntime.backend}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleCalibrate('record_zero')}
+                      className="px-2.5 py-1.5 rounded bg-limebrand/15 hover:bg-limebrand/25 border border-limebrand/40 font-mono text-[11px] text-limebrand"
+                    >
+                      Zero Encoders Now
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCalibrate('step_test')}
+                      className="px-2.5 py-1.5 rounded bg-cyanbrand/15 hover:bg-cyanbrand/25 border border-cyanbrand/40 font-mono text-[11px] text-cyanbrand"
+                    >
+                      Run Step-Test (50ms)
+                    </button>
+                  </div>
+                  <SliderField
+                    label="Payload Mass Compensation"
+                    value={payloadMassKg}
+                    min={0}
+                    max={5}
+                    step={0.1}
+                    unit=" kg"
+                    onChange={(v) => {
+                      setPayloadMassKg(v);
+                      handleCalibrate('set_payload', { payload_mass_kg: v });
+                    }}
+                  />
+                </div>
+
+                {/* Hugging Face / SafeTensors Weight Loader */}
+                <form
+                  onSubmit={handleLoadCheckpoint}
+                  className="rounded-lg border border-white/[0.08] bg-obsidian/70 p-3 space-y-2"
+                >
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-cyanbrand">
+                    Load Real VLA Weights (.safetensors / HF Hub)
+                  </div>
+                  <input
+                    value={checkpointRepo}
+                    onChange={(e) => setCheckpointRepo(e.target.value)}
+                    placeholder="swizzle/edge-flow-vla or path/to/weights.safetensors"
+                    className="w-full px-2.5 py-1.5 rounded bg-panel border border-white/[0.12] font-mono text-[11px] text-white"
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="inline-flex items-center gap-2 font-mono text-[11px] text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={quantizeInt8}
+                        onChange={(e) => setQuantizeInt8(e.target.checked)}
+                        className="accent-[#C9FF3B]"
+                      />
+                      <span>INT8 Quantize (4GB Edge)</span>
+                    </label>
+                    <button
+                      type="submit"
+                      className="px-3 py-1 rounded bg-white/[0.08] hover:bg-white/[0.15] border border-white/[0.12] font-mono text-[11px] text-white"
+                    >
+                      Bind Weights
+                    </button>
+                  </div>
+                  {checkpointStatus && (
+                    <div className="font-mono text-[10px] text-emerald-300 leading-snug">
+                      {checkpointStatus.source} · params={checkpointStatus.num_parameters ?? 0} · int8=
+                      {String(checkpointStatus.quantized_int8)}
+                    </div>
+                  )}
+                </form>
+
+                {/* Binary MCAP Replay Scrubber */}
+                <div className="rounded-lg border border-white/[0.08] bg-obsidian/70 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-slate-300">
+                      MCAP Black-Box Replay &amp; Binary Export
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={handleFetchReplay}
+                      className="px-2.5 py-1.5 rounded bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] font-mono text-[11px] text-slate-200"
+                    >
+                      Load Episode Frames
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDownloadMcap}
+                      className="px-2.5 py-1.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 font-mono text-[11px] text-emerald-300"
+                    >
+                      Download .MCAP Log
+                    </button>
+                  </div>
+                  {replayFrames.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      <input
+                        type="range"
+                        min={0}
+                        max={Math.max(0, replayFrames.length - 1)}
+                        value={replayIndex}
+                        onChange={(e) => setReplayIndex(Number(e.target.value))}
+                        className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#38BDF8]"
+                      />
+                      {replayFrames[replayIndex] && (
+                        <div className="font-mono text-[10px] text-slate-300 bg-panel/80 p-2 rounded border border-white/[0.07]">
+                          Step #{replayFrames[replayIndex].step_index} · h(x)=
+                          {Number(replayFrames[replayIndex].min_barrier_margin ?? 0).toFixed(3)}m ·{' '}
+                          {replayFrames[replayIndex].cbf_intervened ? 'CBF_CLAMP' : 'NOMINAL'} ·{' '}
+                          <span className="text-cyanbrand truncate inline-block max-w-[180px] align-bottom">
+                            {replayFrames[replayIndex].receipt_digest}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

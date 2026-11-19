@@ -32,14 +32,22 @@ server = [
     "uvicorn>=0.22.0",
     "websockets>=11.0"
 ]
+hardware = [
+    "pyserial>=3.5"
+]
+dataset = [
+    "pyarrow>=14.0.0"
+]
 test = [
     "pytest>=7.0",
-    "pytest-benchmark>=4.0"
+    "pytest-benchmark>=4.0",
+    "httpx>=0.24.0"
 ]
 
 [project.scripts]
 swizzle-robotics = "swizzle_robotics.cli:main"
 swizzle-robotics-server = "swizzle_robotics.server:run_server"
+swizzle-robotics-arena = "swizzle_robotics.arena_backend:run_arena_server"
 
 [tool.setuptools.packages.find]
 where = ["."]

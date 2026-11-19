@@ -381,13 +381,97 @@ class EmbodiedFlightRecorder:
         }
         (meta_dir / "stats.json").write_text(json.dumps(stats, indent=2), encoding="utf-8")
 
+        parquet_path: Optional[Path] = None
+        if rows:
+            try:
+                import pyarrow as pa  # type: ignore
+                import pyarrow.parquet as pq  # type: ignore
+
+                parquet_path = chunk_dir / f"{ep_name}.parquet"
+                table = pa.Table.from_pylist(rows)
+                pq.write_table(table, parquet_path)
+            except Exception:
+                parquet_path = None
+
         return {
             "dataset_root": str(root),
             "episode_file": str(jsonl_path),
+            "parquet_file": str(parquet_path) if parquet_path is not None else None,
             "frames": len(self.steps),
             "dagger_flagged": self.dagger_flagged,
             "cbf_interventions": self.intervention_count,
         }
+
+    def to_mcap_bytes(self) -> bytes:
+        writer = McapBinaryWriter()
+        for s in self.steps:
+            writer.add_message("/joint_states", s.timestamp_ns, {"pose": s.pose, "step": s.step_index})
+            writer.add_message("/action/raw_vla", s.timestamp_ns, {"action": s.raw_action})
+            writer.add_message("/action/cbf_safe", s.timestamp_ns, {"action": s.safe_action})
+            writer.add_message(
+                "/cbf/safety",
+                s.timestamp_ns,
+                {"intervened": s.cbf_intervened, "min_margin": s.min_barrier_margin},
+            )
+            writer.add_message("/swizzle/receipt", s.timestamp_ns, asdict(s.receipt))
+        return writer.to_bytes()
+
+    def get_replay_frames(self, limit: int = 300) -> List[Dict[str, Any]]:
+        tail = self.steps[-limit:] if limit > 0 else self.steps
+        return [
+            {
+                "step_index": s.step_index,
+                "timestamp_ns": s.timestamp_ns,
+                "prompt": s.prompt,
+                "pose": s.pose,
+                "raw_action": s.raw_action,
+                "safe_action": s.safe_action,
+                "cbf_intervened": s.cbf_intervened,
+                "min_barrier_margin": s.min_barrier_margin,
+                "receipt_digest": s.receipt.receipt_digest,
+            }
+            for s in tail
+        ]
+
+
+def parse_mcap_messages(blob: bytes) -> List[Dict[str, Any]]:
+    """Lightweight reader decoding OP_CHANNEL & OP_MESSAGE JSON records from `\x89MCAP0\\r\\n`."""
+    if not blob.startswith(MCAP_MAGIC) or not blob.endswith(MCAP_MAGIC):
+        raise ValueError("Invalid MCAP magic header/footer")
+    pos = len(MCAP_MAGIC)
+    end = len(blob) - len(MCAP_MAGIC)
+    channels: Dict[int, str] = {}
+    messages: List[Dict[str, Any]] = []
+    while pos + 9 <= end:
+        opcode = blob[pos]
+        rec_len = struct.unpack_from("<Q", blob, pos + 1)[0]
+        rec_start = pos + 9
+        rec_end = rec_start + rec_len
+        if rec_end > end:
+            break
+        rec = blob[rec_start:rec_end]
+        if opcode == OP_CHANNEL and len(rec) >= 8:
+            cid, _sid = struct.unpack_from("<HH", rec, 0)
+            tlen = struct.unpack_from("<I", rec, 4)[0]
+            topic = rec[8 : 8 + tlen].decode("utf-8", errors="replace")
+            channels[cid] = topic
+        elif opcode == OP_MESSAGE and len(rec) >= 22:
+            cid, seq, log_time, _pub_time = struct.unpack_from("<HIQQ", rec, 0)
+            payload_raw = rec[22:]
+            try:
+                body = json.loads(payload_raw.decode("utf-8"))
+            except Exception:
+                body = {"raw_len": len(payload_raw)}
+            messages.append(
+                {
+                    "topic": channels.get(cid, f"channel_{cid}"),
+                    "sequence": seq,
+                    "timestamp_ns": log_time,
+                    "data": body,
+                }
+            )
+        pos = rec_end
+    return messages
 
 
 def _array_stats(arr: np.ndarray) -> Dict[str, List[float]]:

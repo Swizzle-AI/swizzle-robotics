@@ -6,6 +6,7 @@ from .openvla import OpenVLAPolicy
 from .pi0_flow import Pi0Policy
 from .edge_flow_runner import TorchEdgeVLAPolicy
 from .vjepa_wm import VJEPAWorldModel
+from .hf_vla_loader import CheckpointLoadStatus, load_real_vla_checkpoint
 
 MODEL_REGISTRY = {
     "nvidia/cosmos-predict-mini": CosmosWorldModel,

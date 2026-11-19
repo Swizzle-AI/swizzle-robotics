@@ -34,16 +34,19 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .core.native_accel import probe_native_runtime
 from .core.patch_cache import extract_patch_intensities_from_frame
 from .core.recorder import EmbodiedFlightRecorder
 from .core.safety import ControlBarrierShield, ObstacleSphere, SafetyConfig
 from .core.zenoh_bridge import ZenohBridgeConfig, ZenohRoboticsBridge
+from .drivers import BaseHardwareDriver, get_hardware_driver
 from .envs import ArenaTaskConfig, SwizzleManipulationArena
 from .hardware import HardwareDetector
-from .models import MODEL_REGISTRY, get_policy
+from .models import MODEL_REGISTRY, get_policy, load_real_vla_checkpoint
 
 
 class ObstacleSpec(BaseModel):
@@ -121,6 +124,20 @@ class ExportRequest(BaseModel):
     episode_label: str = "real_arena_session"
 
 
+class CalibrationRequest(BaseModel):
+    action: str = Field(..., pattern="^(record_zero|set_limits|set_payload|step_test)$")
+    robot_id: Optional[str] = None
+    min_rad: Optional[List[float]] = None
+    max_rad: Optional[List[float]] = None
+    payload_mass_kg: Optional[float] = Field(None, ge=0.0, le=20.0)
+
+
+class CheckpointLoadRequest(BaseModel):
+    repo_or_path: str = "swizzle/edge-flow-vla"
+    quantize_int8: bool = False
+    local_files_only: bool = True
+
+
 ROBOT_ADAPTER_TEMPLATES = [
     {
         "preset_id": "so100",
@@ -178,6 +195,15 @@ class RealLifeArenaEngine:
         self.recorder = EmbodiedFlightRecorder(episode_id="ep_live_000", model_id=self.params.policy_model)
         self.zenoh = ZenohRoboticsBridge(ZenohBridgeConfig(), use_live_zenoh=False)
         self.hardware = HardwareDetector.detect()
+        self.native_runtime = probe_native_runtime()
+        self.checkpoint_status: Dict[str, Any] = {
+            "source": self.params.policy_model,
+            "loaded_real_weights": False,
+            "quantized_int8": False,
+            "sparse_vit_hooked": True,
+            "num_parameters": 0,
+            "device": self.hardware.device_type,
+        }
 
         self.running = True
         self.estop_active = False
@@ -192,6 +218,9 @@ class RealLifeArenaEngine:
         self.recent_events: List[Dict[str, Any]] = []
         self._last_tick_ts = time.perf_counter()
 
+        self._drivers: Dict[str, BaseHardwareDriver] = {
+            "local-mujoco-hil": get_hardware_driver("mujoco_hil", f"local://{self.arena.backend_mode}", dof=7)
+        }
         self.robots: Dict[str, Dict[str, Any]] = {
             "local-mujoco-hil": {
                 "robot_id": "local-mujoco-hil",
@@ -202,8 +231,11 @@ class RealLifeArenaEngine:
                 "hardware_preset": "mujoco_hil",
                 "connected": True,
                 "live_ws": False,
+                "hardware_live": False,
                 "last_seen": time.time(),
                 "last_pose": list(self.obs.eef_pose),
+                "joint_positions": [0.0] * 7,
+                "packets_sent": 0,
                 "ticks_served": 0,
             }
         }
@@ -291,6 +323,8 @@ class RealLifeArenaEngine:
         return self.params.obstacles
 
     def register_robot(self, req: RobotConnectRequest) -> Dict[str, Any]:
+        drv = get_hardware_driver(req.adapter, req.endpoint, dof=req.dof)
+        self._drivers[req.robot_id] = drv
         entry = {
             "robot_id": req.robot_id,
             "name": req.name,
@@ -298,10 +332,13 @@ class RealLifeArenaEngine:
             "endpoint": req.endpoint,
             "dof": req.dof,
             "hardware_preset": req.hardware_preset,
-            "connected": req.adapter == "mujoco_hil",
+            "connected": drv.connected,
             "live_ws": False,
+            "hardware_live": drv.hardware_live,
             "last_seen": time.time(),
             "last_pose": [0.0, 0.0, 0.25, 0.0, 0.0, 0.0],
+            "joint_positions": list(drv.joint_positions),
+            "packets_sent": drv.packets_sent,
             "ticks_served": 0,
         }
         self.robots[req.robot_id] = entry
@@ -325,6 +362,9 @@ class RealLifeArenaEngine:
         if robot_id == "local-mujoco-hil":
             raise ValueError("Cannot remove built-in local MuJoCo HIL twin")
         self.robots.pop(robot_id, None)
+        drv = self._drivers.pop(robot_id, None)
+        if drv is not None:
+            drv.close()
         self._robot_sockets.pop(robot_id, None)
         if self.active_robot_id == robot_id:
             self.active_robot_id = "local-mujoco-hil"
@@ -336,6 +376,8 @@ class RealLifeArenaEngine:
             self.estop_active = True
             self.running = False
             self.shield.reset()
+            for drv in self._drivers.values():
+                drv.emergency_stop()
             self._push_event("ESTOP", "HARD E-STOP ENGAGED — all motor outputs latched to zero")
         elif cmd == "clear_estop":
             self.estop_active = False
@@ -439,6 +481,7 @@ class RealLifeArenaEngine:
         err = (target - eef) * 3.8
 
         # Combine policy chunk evaluation (for real PatchCache + RTC telemetry) with tracking vector
+        intensities = extract_patch_intensities_from_frame(self.obs.frame, grid_size=14)
         _, substeps, pc_decision, spec_act = self.policy.step(self.obs.frame, self.params.instruction)
         grip = 1.0 if float(np.linalg.norm(target - eef)) < 0.09 or self.obs.grasped else -1.0
 
@@ -476,11 +519,25 @@ class RealLifeArenaEngine:
             done = False
             info = {"obstacle_collision": False, "table_penetration_mm": 0.0, "success": False}
 
-        # Update local robot status
+        active_drv = self._drivers.get(self.active_robot_id) or self._drivers["local-mujoco-hil"]
+        drv_telemetry = active_drv.send_safe_action(safety.safe_action)
+
+        # Update active & local robot status
         local_bot = self.robots["local-mujoco-hil"]
         local_bot["last_seen"] = time.time()
         local_bot["last_pose"] = [round(float(v), 4) for v in self.obs.eef_pose]
+        local_bot["joint_positions"] = drv_telemetry.joint_positions
+        local_bot["packets_sent"] = drv_telemetry.packets_sent
         local_bot["ticks_served"] += 1
+
+        if self.active_robot_id in self.robots and self.active_robot_id != "local-mujoco-hil":
+            ab = self.robots[self.active_robot_id]
+            ab["last_seen"] = time.time()
+            ab["last_pose"] = [round(float(v), 4) for v in self.obs.eef_pose]
+            ab["joint_positions"] = drv_telemetry.joint_positions
+            ab["packets_sent"] = drv_telemetry.packets_sent
+            ab["hardware_live"] = drv_telemetry.hardware_live
+            ab["ticks_served"] += 1
 
         frame = {
             "type": "telemetry",
@@ -493,6 +550,7 @@ class RealLifeArenaEngine:
             "estop_active": self.estop_active,
             "effective_hz": round(min(999.0, 1.0 / dt), 1),
             "pose": [round(float(v), 4) for v in self.obs.eef_pose],
+            "joint_positions": drv_telemetry.joint_positions,
             "target": [round(float(v), 4) for v in target],
             "cube_pos": [round(float(v), 4) for v in self.obs.cube_pos],
             "goal_pos": [round(float(v), 4) for v in self.obs.goal_pos],
@@ -506,9 +564,13 @@ class RealLifeArenaEngine:
             "intervention_reasons": safety.intervention_reasons,
             "solver_latency_ms": safety.solver_latency_ms,
             "patch_hit_ratio": round(float(pc_decision.patch_hit_ratio), 4),
+            "patch_intensities": [round(float(v), 2) for v in intensities],
+            "patch_reuse_mask": [1 if m else 0 for m in pc_decision.reuse_mask],
             "spec_act_rate": round(float(spec_act.acceptance_rate), 4),
             "collisions": self.collision_count,
             "interventions_count": self.interventions_count,
+            "packets_sent": drv_telemetry.packets_sent,
+            "hardware_live": drv_telemetry.hardware_live,
             "receipt_digest": receipt.receipt_digest,
             "dagger_flagged": self.recorder.dagger_flagged,
             "obstacles": [o.model_dump() for o in self.params.obstacles],
@@ -666,7 +728,42 @@ class RealLifeArenaEngine:
             "deploy_profile": deploy_profile,
         }
 
+    def calibrate_robot(self, req: CalibrationRequest) -> Dict[str, Any]:
+        rid = req.robot_id or self.active_robot_id
+        drv = self._drivers.get(rid) or self._drivers["local-mujoco-hil"]
+        if req.action == "record_zero":
+            drv.calibration.record_zero(drv.joint_positions)
+            self._push_event("CALIBRATE", f"Zeroed {rid} joint encoders at {drv.joint_positions}")
+        elif req.action == "set_limits":
+            if req.min_rad:
+                drv.calibration.min_rad = [float(x) for x in req.min_rad[: drv.calibration.dof]]
+            if req.max_rad:
+                drv.calibration.max_rad = [float(x) for x in req.max_rad[: drv.calibration.dof]]
+            self._push_event("CALIBRATE", f"Updated mechanical joint bounds for {rid}")
+        elif req.action == "set_payload" and req.payload_mass_kg is not None:
+            drv.calibration.payload_mass_kg = float(req.payload_mass_kg)
+            self._push_event("CALIBRATE", f"Set payload compensation mass={req.payload_mass_kg:.2f} kg on {rid}")
+        elif req.action == "step_test":
+            drv.send_safe_action([0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            self._push_event("CALIBRATE", f"Executed safe step-impulse verification on {rid} ({drv.last_latency_ms} ms)")
+        return drv.status()
+
+    def load_checkpoint(self, req: CheckpointLoadRequest) -> Dict[str, Any]:
+        loaded_policy, status = load_real_vla_checkpoint(
+            repo_or_path=req.repo_or_path,
+            quantize_int8=req.quantize_int8,
+            patch_delta_threshold=self.params.patch_delta_threshold,
+            local_files_only=req.local_files_only,
+        )
+        self.policy = loaded_policy
+        self.recorder.model_id = req.repo_or_path
+        self.params.policy_model = req.repo_or_path
+        self.checkpoint_status = asdict(status)
+        self._push_event("CHECKPOINT", f"{status.source} (int8={status.quantized_int8}, params={status.num_parameters})")
+        return self.checkpoint_status
+
     def snapshot(self) -> Dict[str, Any]:
+        active_drv = self._drivers.get(self.active_robot_id) or self._drivers["local-mujoco-hil"]
         return {
             "active_robot_id": self.active_robot_id,
             "running": self.running,
@@ -678,6 +775,9 @@ class RealLifeArenaEngine:
             "recorded_steps": len(self.recorder.steps),
             "backend_mode": self.arena.backend_mode,
             "hardware": asdict(self.hardware),
+            "native_runtime": asdict(self.native_runtime),
+            "checkpoint_status": self.checkpoint_status,
+            "active_driver": active_drv.status(),
             "available_models": sorted(MODEL_REGISTRY.keys()),
             "adapter_templates": ROBOT_ADAPTER_TEMPLATES,
             "robots": list(self.robots.values()),
@@ -845,6 +945,41 @@ def create_arena_app(
     def export_session(req: ExportRequest) -> Dict[str, Any]:
         return arena_engine.export_session(out_dir=req.out_dir, label=req.episode_label)
 
+    @app.get("/api/arena/mcap/download")
+    def download_mcap() -> Response:
+        blob = arena_engine.recorder.to_mcap_bytes()
+        headers = {"Content-Disposition": f'attachment; filename="{arena_engine.recorder.episode_id}.mcap"'}
+        return Response(content=blob, media_type="application/octet-stream", headers=headers)
+
+    @app.get("/api/arena/episodes/replay")
+    def replay_episode(limit: int = 240) -> Dict[str, Any]:
+        return {
+            "episode_id": arena_engine.recorder.episode_id,
+            "model_id": arena_engine.recorder.model_id,
+            "dagger_flagged": arena_engine.recorder.dagger_flagged,
+            "frames": arena_engine.recorder.get_replay_frames(limit=limit),
+        }
+
+    @app.post("/api/arena/calibrate")
+    async def calibrate_robot(req: CalibrationRequest) -> Dict[str, Any]:
+        status = arena_engine.calibrate_robot(req)
+        await _broadcast_studio({"type": "state_sync", "snapshot": arena_engine.snapshot()})
+        return status
+
+    @app.post("/api/arena/checkpoint")
+    async def load_checkpoint(req: CheckpointLoadRequest) -> Dict[str, Any]:
+        status = arena_engine.load_checkpoint(req)
+        await _broadcast_studio({"type": "state_sync", "snapshot": arena_engine.snapshot()})
+        return status
+
+    @app.get("/api/arena/runtime")
+    def runtime_status() -> Dict[str, Any]:
+        return {
+            "native_runtime": asdict(arena_engine.native_runtime),
+            "checkpoint_status": arena_engine.checkpoint_status,
+            "host_hardware": asdict(arena_engine.hardware),
+        }
+
     @app.websocket("/ws/studio")
     async def studio_ws(ws: WebSocket) -> None:
         await ws.accept()
@@ -902,13 +1037,28 @@ def create_arena_app(
 app = create_arena_app(enable_background_loop=True)
 
 
-def run_arena_server(port: int = 8787, host: str = "0.0.0.0") -> None:
+def run_arena_server(port: int = 8787, host: str = "0.0.0.0", tunnel: bool = False) -> None:
+    import shutil
+    import subprocess
     import uvicorn
+
+    tunnel_proc = None
+    if tunnel:
+        cf_bin = shutil.which("cloudflared")
+        if cf_bin:
+            print(f"Starting Cloudflare HTTPS/WSS quick-tunnel -> http://127.0.0.1:{port} ...")
+            tunnel_proc = subprocess.Popen([cf_bin, "tunnel", "--url", f"http://127.0.0.1:{port}"])
+        else:
+            print("Note: `cloudflared` not found on PATH; run `cloudflared tunnel --url http://127.0.0.1:" + str(port) + "` for WSS access from https://swizzle-robotics.vercel.app")
 
     print(f"Swizzle Real-Life Arena Backend listening on http://{host}:{port}")
     print(f"  - Studio WebSocket:  ws://{host}:{port}/ws/studio")
     print(f"  - Robot HW Bridge:   ws://{host}:{port}/ws/robot/<robot_id>")
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    try:
+        uvicorn.run(app, host=host, port=port, log_level="info")
+    finally:
+        if tunnel_proc is not None:
+            tunnel_proc.terminate()
 
 
 if __name__ == "__main__":
