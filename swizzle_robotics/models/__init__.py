@@ -4,6 +4,7 @@ from .gr00t_policy import Gr00tPolicy
 from .smol_vla import SmolVLAPolicy
 from .openvla import OpenVLAPolicy
 from .pi0_flow import Pi0Policy
+from .edge_flow_runner import TorchEdgeVLAPolicy
 from .vjepa_wm import VJEPAWorldModel
 
 MODEL_REGISTRY = {
@@ -12,6 +13,7 @@ MODEL_REGISTRY = {
     "lerobot/smolvla-450m": SmolVLAPolicy,
     "openvla/openvla-7b-swizzle": OpenVLAPolicy,
     "physical-intelligence/pi0-fast": Pi0Policy,
+    "swizzle/edge-flow-vla": TorchEdgeVLAPolicy,
     "meta/vjepa2-latent-mpc": VJEPAWorldModel,
     "meta/dino-wm-latent": VJEPAWorldModel,
 }
@@ -38,6 +40,7 @@ __all__ = [
     "SmolVLAPolicy",
     "OpenVLAPolicy",
     "Pi0Policy",
+    "TorchEdgeVLAPolicy",
     "VJEPAWorldModel",
     "MODEL_REGISTRY",
     "get_policy",

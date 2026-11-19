@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "swizzle-robotics"
-version = "0.2.0"
-description = "Real-time robotics VLA world models, 80.5 Hz visual servoing, and Student Playground"
+version = "0.3.0"
+description = "Real-time robotics VLA world models, Swizzle-CBF safety shield, RTC, MuJoCo arena, and binary MCAP recorder"
 readme = "README.md"
 authors = [{ name = "Paramveer singh", email = "paramveer@swizzle.ai" }]
 license = { text = "Apache-2.0" }

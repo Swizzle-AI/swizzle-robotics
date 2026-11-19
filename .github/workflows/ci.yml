@@ -41,3 +41,7 @@ jobs:
     - name: Run Safety, RTC & World-Model Ablation benchmark
       run: |
         python benchmarks/bench_safety_rtc_ablation.py
+
+    - name: Run Phase 5 Physics Arena & Neural Flow VLA benchmark
+      run: |
+        python benchmarks/bench_mujoco_closed_loop.py

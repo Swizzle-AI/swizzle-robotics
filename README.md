@@ -90,7 +90,8 @@ Closes the industrial reliability & observability gap left by raw VLA research c
 - **`Swizzle-CBF` (`swizzle_robotics/core/safety.py`)**: Discrete Control Barrier Function safety filter enforcing workspace geofencing, spherical keep-out barriers, velocity/jerk slew-rate limits, and network deadman decay (`0/25` adversarial safety violations vs `25/25` unshielded, **`0.10 ms`** mean solve overhead).
 - **`Swizzle-RTC` (`push_rtc_chunk`)**: Prefix-frozen exponential soft-mask inpainting across overlapping asynchronous action chunks (`1.55x` smaller chunk-boundary step jumps).
 - **Dual-Format Flight Recorder (`swizzle_robotics/core/recorder.py`)**: Streams valid Foxglove-ready binary **`.mcap`** (`\x89MCAP0\r\n`) AND Hugging Face **`LeRobot v2.1`** episodes with automatic `dagger_flagged` intervention tags and tamper-evident **cryptographic `PhysicalReceipt` hashes**.
-- **Hierarchical `S2 -> S1 -> S0` + `Eclipse Zenoh` Bridge (`hierarchical.py`, `zenoh_bridge.py`)**: Connects `swizzle-rt serve` JSON Schema planning into `20–80 Hz` RTC policy chunks and `50–200 Hz` CBF-shielded spline commands (`76.4 Hz` closed loop with verified receipts).
+- **Hierarchical `S2 -> S1 -> S0` + `Eclipse Zenoh` Bridge (`hierarchical.py`, `zenoh_bridge.py`)**: Connects `swizzle-rt serve` JSON Schema planning into `20–80 Hz` RTC policy chunks and `50–200 Hz` CBF-shielded spline commands (`87.1 Hz` closed loop with verified receipts).
+- **Neural Sparse Flow VLA (`TorchEdgeVLAPolicy`) & `MuJoCo` Manipulation Arena (`mujoco_arena.py`)**: PyTorch sparse token-slice `PatchCache` ViT (`1.014 ms` vs `1.377 ms` dense, **`1.36x` faster** on CPU) + K-step Euler Flow-Matching Action Expert with `.safetensors` serialization, coupled to our MJCF rigid-body manipulation arena (`192.7 Hz`, **`0` collisions**, `27.6 KB` binary `.mcap` + `LeRobot v2.1` export).
 
 ---
 
@@ -127,6 +128,9 @@ swizzle-robotics run --model lerobot/smolvla-450m --camera 0
 
 # Run headless simulation benchmark (120 steps)
 swizzle-robotics run --model nvidia/gr00t-manipulator-v1 --mock --steps 120
+
+# Run closed-loop MuJoCo manipulation arena & export binary MCAP + LeRobot v2.1 episodes
+swizzle-robotics arena --episodes 3 --steps 40 --record-dir ./recordings
 
 # Launch REST & WebSocket API server
 swizzle-robotics serve --port 8080

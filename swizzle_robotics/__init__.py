@@ -27,11 +27,12 @@ from .models.gr00t_policy import Gr00tPolicy
 from .models.smol_vla import SmolVLAPolicy
 from .models.openvla import OpenVLAPolicy
 from .models.pi0_flow import Pi0Policy
+from .models.edge_flow_runner import TorchEdgeVLAPolicy
 from .models.vjepa_wm import VJEPAWorldModel
 from .models import get_policy, get_world_model, MODEL_REGISTRY
 from .servoing import VisualServoingLoop, ServoingTelemetry
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "ActionChunk",
@@ -74,6 +75,7 @@ __all__ = [
     "SmolVLAPolicy",
     "OpenVLAPolicy",
     "Pi0Policy",
+    "TorchEdgeVLAPolicy",
     "VJEPAWorldModel",
     "MODEL_REGISTRY",
     "get_policy",
