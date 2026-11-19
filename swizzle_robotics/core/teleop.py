@@ -115,3 +115,83 @@ class TemporalActionEnsembler:
         )
 
         return curr_act, substeps_act
+
+    @staticmethod
+    def rtc_soft_mask_weights(
+        execution_delay: int,
+        overlap_horizon: int,
+        chunk_horizon: int,
+    ) -> List[float]:
+        """
+        Computes Real-Time Chunking (RTC) inpainting soft-mask weights w_i in [0.0, 1.0].
+        - i < execution_delay: w_i = 1.0 (frozen committed prefix while GPU infers)
+        - execution_delay <= i < execution_delay + overlap_horizon: exponential blend
+        - i >= execution_delay + overlap_horizon: w_i = 0.0 (trust fresh chunk)
+        """
+        d = max(0, int(execution_delay))
+        s = max(1, int(overlap_horizon))
+        H = max(1, int(chunk_horizon))
+        denom = math.expm1(float(s)) if s > 0 else 1.0
+        weights: List[float] = []
+        for i in range(H):
+            if i < d:
+                weights.append(1.0)
+            elif i < d + s:
+                c = float(d + s - i)
+                w = math.expm1(c) / denom if denom > 0 else 0.0
+                weights.append(round(max(0.0, min(1.0, w)), 6))
+            else:
+                weights.append(0.0)
+        return weights
+
+    def push_rtc_chunk(
+        self,
+        start_step: int,
+        new_chunk: Sequence[Sequence[float]],
+        execution_delay: int = 2,
+        overlap_horizon: int = 4,
+    ) -> Tuple[List[List[float]], List[List[float]]]:
+        """
+        Applies Real-Time Chunking (RTC) inpainting to blend `new_chunk` against the
+        currently executing previous chunk, guaranteeing smooth continuous motor transitions
+        even under 50-150 ms inference latency.
+
+        Returns `(inpainted_chunk, quintic_substeps_for_current_step)`.
+        """
+        clean_new = [[clamp_unit(v) for v in row[:7]] for row in new_chunk]
+        if not clean_new:
+            clean_new = [[0.0] * 7]
+        H = len(clean_new)
+        weights = self.rtc_soft_mask_weights(execution_delay, overlap_horizon, H)
+
+        blended_chunk: List[List[float]] = []
+        for i in range(H):
+            step_idx = start_step + i
+            # Evaluate weighted prediction from active previous chunks at step_idx
+            prev_vec = None
+            w_sum = 0.0
+            acc = [0.0] * 7
+            for st, ch in self._chunks:
+                off = step_idx - st
+                if 0 <= off < len(ch):
+                    wt = math.exp(-self.decay_lambda * off)
+                    for d_idx in range(7):
+                        acc[d_idx] += wt * ch[off][d_idx]
+                    w_sum += wt
+            if w_sum > 0.0:
+                prev_vec = [acc[d_idx] / w_sum for d_idx in range(7)]
+
+            if prev_vec is None or weights[i] <= 0.0:
+                blended_chunk.append([round(x, 4) for x in clean_new[i]])
+            elif weights[i] >= 1.0:
+                blended_chunk.append([round(clamp_unit(x), 4) for x in prev_vec])
+            else:
+                w = weights[i]
+                row = [
+                    round(clamp_unit(w * prev_vec[d_idx] + (1.0 - w) * clean_new[i][d_idx]), 4)
+                    for d_idx in range(7)
+                ]
+                blended_chunk.append(row)
+
+        _, substeps = self.push_chunk(start_step, blended_chunk)
+        return blended_chunk, substeps

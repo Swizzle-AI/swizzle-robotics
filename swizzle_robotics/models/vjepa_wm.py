@@ -27,3 +27,7 @@ class VJEPAWorldModel(BaseWorldModel):
         a = np.array(action[:7], dtype=np.float32)
         next_z = np.dot(self.latent_transition, latent_state) + np.dot(self.action_coupling, a)
         return np.tanh(next_z)
+
+    def predict_next_state_batch(self, latent_states: np.ndarray, actions: np.ndarray) -> np.ndarray:
+        """Vectorized V-JEPA 2 batched latent transition across N rollouts."""
+        return np.tanh(latent_states @ self.latent_transition.T + actions @ self.action_coupling.T)

@@ -60,6 +60,17 @@ class BaseWorldModel(ABC):
         """Simulates physical forward transition s_{t+1} = f(s_t, a_t)."""
         pass
 
+    def predict_next_state_batch(self, latent_states: np.ndarray, actions: np.ndarray) -> np.ndarray:
+        """
+        Vectorized batch state transition over `N` candidate trajectories:
+        `latent_states`: `(N, D)`, `actions`: `(N, 7)` -> returns `(N, D)`.
+        Subclasses should override with single BLAS/GPU matrix ops for max speedup.
+        """
+        return np.stack(
+            [self.predict_next_state(latent_states[i], actions[i]) for i in range(latent_states.shape[0])],
+            axis=0,
+        )
+
     def rollout(self, initial_state: np.ndarray, action_sequence: Sequence[Sequence[float]]) -> WorldRolloutResult:
         """Rolls out physical trajectory across horizon H in latent space."""
         states = []
@@ -130,3 +141,55 @@ class BaseWorldModel(ABC):
         first_action = [round(float(v), 4) for v in best_seq[0]]
         full_trajectory = [[round(float(v), 4) for v in row] for row in best_seq]
         return first_action, full_trajectory, latency_ms
+
+    def plan_cem_batched(
+        self,
+        current_frame: Any,
+        goal_frame: Any,
+        horizon: int = 5,
+        num_samples: int = 128,
+        elite_ratio: float = 0.15,
+        iterations: int = 3,
+    ) -> Tuple[List[float], List[List[float]], float]:
+        """
+        Vectorized Batched Cross-Entropy Method (Swizzle-MPC) evaluating all `N`
+        candidate trajectories simultaneously without per-sample Python loops.
+        """
+        import time
+
+        t0 = time.perf_counter()
+        z_curr = self.encode_observation(current_frame).astype(np.float32)
+        z_goal = self.encode_observation(goal_frame).astype(np.float32)
+
+        action_dim = 7
+        mu = np.zeros((horizon, action_dim), dtype=np.float32)
+        sigma = np.ones((horizon, action_dim), dtype=np.float32) * 0.4
+        num_elites = max(2, int(num_samples * elite_ratio))
+
+        best_cost = float("inf")
+        best_seq = mu.copy()
+
+        for _ in range(iterations):
+            samples = np.random.normal(mu, sigma, size=(num_samples, horizon, action_dim)).astype(np.float32)
+            samples = np.clip(samples, -1.0, 1.0)
+
+            z = np.repeat(z_curr[np.newaxis, :], num_samples, axis=0)
+            costs = np.zeros(num_samples, dtype=np.float32)
+            for h in range(horizon):
+                z = self.predict_next_state_batch(z, samples[:, h, :])
+                costs += np.linalg.norm(z - z_goal[np.newaxis, :], axis=1)
+
+            elite_indices = np.argsort(costs)[:num_elites]
+            elites = samples[elite_indices]
+
+            if costs[elite_indices[0]] < best_cost:
+                best_cost = float(costs[elite_indices[0]])
+                best_seq = elites[0]
+
+            mu = np.mean(elites, axis=0)
+            sigma = np.std(elites, axis=0) + 1e-4
+
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        first_action = [round(float(v), 4) for v in best_seq[0]]
+        full_trajectory = [[round(float(v), 4) for v in row] for row in best_seq]
+        return first_action, full_trajectory, round(latency_ms, 2)

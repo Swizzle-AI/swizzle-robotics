@@ -32,3 +32,7 @@ class CosmosWorldModel(BaseWorldModel):
         act_vec = np.array(action[:7], dtype=np.float32)
         next_s = np.dot(self.A, latent_state) + np.dot(self.B, act_vec)
         return np.tanh(next_s)
+
+    def predict_next_state_batch(self, latent_states: np.ndarray, actions: np.ndarray) -> np.ndarray:
+        """Vectorized Cosmos batched latent transition across N rollouts."""
+        return np.tanh(latent_states @ self.A.T + actions @ self.B.T)
