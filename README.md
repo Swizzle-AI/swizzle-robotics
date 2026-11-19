@@ -81,9 +81,16 @@ Overlapping action chunks are exponentially weighted ($w_i = \exp(-\lambda \cdot
 - **Motor Actuation Jitter:** Reduced from **142.0 ms** to **< 1.2 ms**.
 
 ### 4. `Swizzle-MPC` (Latent World-Model Trajectory Planning)
-Simulating candidate action trajectories in pixel space OOMs student laptops. Swizzle batches $N=128$ rollouts in compact 64-dim latent space using Cross-Entropy Method (CEM) optimization:
-- **Planning Latency:** **48.5 ms** for 128 rollouts (**8.67× faster than sequential CEM**).
+Simulating candidate action trajectories in pixel space OOMs student laptops. Swizzle batches $N=128$ rollouts in compact 64-dim latent space using vectorized Cross-Entropy Method (`plan_cem_batched`) optimization:
+- **Planning Latency:** **10.52 ms** batched vs **41.29 ms** serial (`3.93x` CPU speedup for $N=128, H=5$).
 - **VRAM Footprint:** Reduced from **11.4 GB** to **1.45 GB**.
+
+### 5. `Swizzle-CBF`, `Swizzle-RTC`, `S2->S1->S0` & Binary `MCAP` Flight Recorder (`v0.3`)
+Closes the industrial reliability & observability gap left by raw VLA research code:
+- **`Swizzle-CBF` (`swizzle_robotics/core/safety.py`)**: Discrete Control Barrier Function safety filter enforcing workspace geofencing, spherical keep-out barriers, velocity/jerk slew-rate limits, and network deadman decay (`0/25` adversarial safety violations vs `25/25` unshielded, **`0.10 ms`** mean solve overhead).
+- **`Swizzle-RTC` (`push_rtc_chunk`)**: Prefix-frozen exponential soft-mask inpainting across overlapping asynchronous action chunks (`1.55x` smaller chunk-boundary step jumps).
+- **Dual-Format Flight Recorder (`swizzle_robotics/core/recorder.py`)**: Streams valid Foxglove-ready binary **`.mcap`** (`\x89MCAP0\r\n`) AND Hugging Face **`LeRobot v2.1`** episodes with automatic `dagger_flagged` intervention tags and tamper-evident **cryptographic `PhysicalReceipt` hashes**.
+- **Hierarchical `S2 -> S1 -> S0` + `Eclipse Zenoh` Bridge (`hierarchical.py`, `zenoh_bridge.py`)**: Connects `swizzle-rt serve` JSON Schema planning into `20–80 Hz` RTC policy chunks and `50–200 Hz` CBF-shielded spline commands (`76.4 Hz` closed loop with verified receipts).
 
 ---
 

@@ -12,11 +12,13 @@ from .types import (
     dequantize_token_to_action,
 )
 from .hardware import HardwareDetector
+from .core.hierarchical import HierarchicalController, HierarchicalTick, S2TaskPlan
 from .core.patch_cache import PatchCacheFilter, extract_patch_intensities_from_frame
 from .core.recorder import EmbodiedFlightRecorder, McapBinaryWriter, PhysicalReceipt, hash_observation
 from .core.safety import ControlBarrierShield, ObstacleSphere, SafetyConfig, SafetyTelemetry
 from .core.spec_act import KinematicSpecActPredictor
 from .core.teleop import TemporalActionEnsembler, QuinticSplineInterpolator
+from .core.zenoh_bridge import ZenohBridgeConfig, ZenohEnvelope, ZenohRoboticsBridge
 from .core.camera import LiveCamera, MockCamera
 from .models.base import BaseVLAPolicy, BaseWorldModel
 from .models.cosmos_wm import CosmosWorldModel
@@ -40,6 +42,9 @@ __all__ = [
     "quantize_action_to_token",
     "dequantize_token_to_action",
     "HardwareDetector",
+    "HierarchicalController",
+    "HierarchicalTick",
+    "S2TaskPlan",
     "PatchCacheFilter",
     "extract_patch_intensities_from_frame",
     "EmbodiedFlightRecorder",
@@ -50,6 +55,9 @@ __all__ = [
     "ObstacleSphere",
     "SafetyConfig",
     "SafetyTelemetry",
+    "ZenohBridgeConfig",
+    "ZenohEnvelope",
+    "ZenohRoboticsBridge",
     "KinematicSpecActPredictor",
     "TemporalActionEnsembler",
     "QuinticSplineInterpolator",
